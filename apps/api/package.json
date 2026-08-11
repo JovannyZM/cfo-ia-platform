@@ -1,0 +1,53 @@
+{
+  "name": "@cfo-ia/api",
+  "version": "0.0.0",
+  "private": true,
+  "scripts": {
+    "build": "nest build",
+    "dev": "nest start --watch",
+    "start": "node dist/main.js",
+    "lint": "eslint .",
+    "test": "vitest run",
+    "test:integration": "vitest run --config vitest.integration.config.ts",
+    "backfill:expense-budgets": "tsx src/budgets/backfill-expense-budgets.ts",
+    "pae:probe:costco": "tsx src/portal-automation/probe-costco.ts",
+    "pae:probe:costco:controlled": "tsx src/portal-automation/probe-costco-controlled.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@cfo-ia/config": "workspace:*",
+    "@cfo-ia/database": "workspace:*",
+    "@cfo-ia/domain": "workspace:*",
+    "@napi-rs/canvas": "^1.0.3",
+    "@nestjs/common": "^11.0.1",
+    "@nestjs/config": "^4.0.2",
+    "@nestjs/core": "^11.0.1",
+    "@nestjs/platform-express": "^11.0.1",
+    "@prisma/client": "^6.1.0",
+    "openai": "^6.16.0",
+    "pdfjs-dist": "^3.11.174",
+    "playwright": "^1.62.1",
+    "reflect-metadata": "^0.2.2",
+    "rxjs": "^7.8.1",
+    "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "@cfo-ia/eslint-config": "workspace:*",
+    "@cfo-ia/typescript-config": "workspace:*",
+    "@nestjs/cli": "^11.0.0",
+    "@nestjs/testing": "^11.0.1",
+    "@types/express": "^5.0.0",
+    "@types/multer": "^2.0.0",
+    "@types/node": "^22.10.2",
+    "@types/supertest": "^6.0.3",
+    "dotenv": "^16.4.7",
+    "eslint": "^9.16.0",
+    "pdf-lib": "^1.17.1",
+    "prisma": "^6.1.0",
+    "supertest": "^7.0.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "unplugin-swc": "^1.5.1",
+    "vitest": "^2.1.8"
+  }
+}

@@ -1,0 +1,634 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum PlatformRole {
+  PLATFORM_ADMIN
+}
+
+enum AccountRole {
+  ACCOUNT_OWNER
+  ACCOUNT_ADMIN
+  MEMBER
+  VIEWER
+}
+
+enum TaxProfileStatus {
+  PENDING_VERIFICATION
+  ACTIVE
+  SUSPENDED
+  CANCELLED
+}
+
+enum TaxProfileRequestStatus {
+  SUBMITTED
+  UNDER_REVIEW
+  AWAITING_PAYMENT
+  APPROVED
+  REJECTED
+  CANCELLED
+}
+
+enum SubscriptionStatus {
+  ACTIVE
+  PAST_DUE
+  CANCELLED
+}
+
+enum SubscriptionItemStatus {
+  ACTIVE
+  CANCELLED
+}
+
+enum ExpenseStatus {
+  REGISTERED
+  CANCELLED
+}
+
+enum BudgetPeriod {
+  MONTHLY
+  ANNUAL
+  PER_EVENT
+}
+
+enum BudgetNature {
+  EXPENSE
+  SAVING
+  INVESTMENT
+}
+
+enum BudgetRuleType {
+  EXPLICIT_ALIAS
+  MERCHANT_NAME
+  KEYWORD
+  EXPENSE_CATEGORY
+}
+
+enum ExpenseBudgetAssignmentStatus {
+  ASSIGNED
+  AMBIGUOUS
+  UNMATCHED
+}
+
+enum ExpenseBudgetAssignedBy {
+  RULE
+  EXPLICIT_USER
+  MANUAL
+}
+
+enum BudgetAlertStatus {
+  NORMAL
+  ATTENTION
+  EXCEEDED
+  CRITICAL
+}
+
+enum DailyCloseDeliveryStatus {
+  PENDING
+  DELIVERED
+  FAILED
+}
+
+enum InvoiceRequestStatus {
+  PENDING
+  NEEDS_TAX_DATA
+  READY
+  PROCESSING
+  COMPLETED
+  FAILED
+  CANCELLED
+}
+
+enum InvoiceRequestAttemptStatus {
+  PROCESSING
+  COMPLETED
+  FAILED
+}
+
+enum InvoiceDocumentType {
+  XML
+  PDF
+}
+
+enum MerchantInvoiceStrategyType {
+  STANDARD_FORM
+  CUSTOM_ADAPTER
+  EMAIL
+  WHATSAPP
+  MANUAL
+}
+
+enum PortalSessionStatus {
+  CREATED
+  RUNNING
+  WAITING_HUMAN
+  COMPLETED
+  FAILED
+  CANCELLED
+  UNKNOWN_OUTCOME
+}
+
+enum ConversationIntentType {
+  NEW_EXPENSE
+  CORRECTION
+  CANCELLATION
+}
+
+enum ConversationSessionStatus {
+  ACTIVE
+  WAITING_INPUT
+  COMPLETED
+  CANCELLED
+  EXPIRED
+}
+
+model Account {
+  id                 String              @id @default(uuid()) @db.Uuid
+  name               String
+  members            AccountMember[]
+  taxProfiles        TaxProfile[]
+  taxProfileRequests TaxProfileRequest[]
+  subscriptions      Subscription[]
+  auditEvents        AuditEvent[]
+  workspaces         Workspace[]
+  createdAt          DateTime            @default(now())
+  updatedAt          DateTime            @updatedAt
+  deletedAt          DateTime?
+
+  @@index([deletedAt])
+}
+
+model Workspace {
+  id                       String                    @id @default(uuid()) @db.Uuid
+  accountId                String                    @db.Uuid
+  name                     String
+  baseCurrency             String                    @default("MXN") @db.VarChar(3)
+  timezone                 String                    @default("America/Mexico_City")
+  account                  Account                   @relation(fields: [accountId], references: [id], onDelete: Restrict)
+  expenses                 Expense[]
+  paymentInstruments       PaymentInstrument[]
+  expenseConversations     ExpenseConversation[]
+  conversationSessions     ConversationSession[]
+  budgets                  Budget[]
+  expenseBudgetAssignments ExpenseBudgetAssignment[]
+  budgetNotificationStates BudgetNotificationState[]
+  dailyCloseDeliveries     DailyCloseDelivery[]
+  invoiceRequests          InvoiceRequest[]
+  portalSessions           PortalSession[]
+  taxProfiles              TaxProfile[]
+  createdAt                DateTime                  @default(now())
+  updatedAt                DateTime                  @updatedAt
+
+  @@index([accountId])
+}
+
+model PortalSession {
+  id           String              @id @default(uuid()) @db.Uuid
+  workspaceId  String              @db.Uuid
+  capability   String
+  adapterKey   String
+  status       PortalSessionStatus @default(CREATED)
+  startedAt    DateTime            @default(now())
+  finishedAt   DateTime?
+  currentUrl   String?
+  errorCode    String?
+  errorMessage String?
+  workspace    Workspace           @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  createdAt    DateTime            @default(now())
+  updatedAt    DateTime            @updatedAt
+
+  @@index([workspaceId, status, createdAt])
+  @@index([adapterKey, createdAt])
+}
+
+model Budget {
+  id                 String                    @id @default(uuid()) @db.Uuid
+  workspaceId        String                    @db.Uuid
+  name               String
+  amount             Decimal                   @db.Decimal(19, 4)
+  currency           String                    @db.VarChar(3)
+  period             BudgetPeriod
+  nature             BudgetNature
+  startDate          DateTime                  @db.Date
+  endDate            DateTime?                 @db.Date
+  active             Boolean                   @default(true)
+  workspace          Workspace                 @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  matchingRules      BudgetMatchingRule[]
+  expenseAssignments ExpenseBudgetAssignment[]
+  notificationStates BudgetNotificationState[]
+  createdAt          DateTime                  @default(now())
+  updatedAt          DateTime                  @updatedAt
+
+  @@unique([workspaceId, name])
+  @@index([workspaceId])
+  @@index([active])
+  @@index([period])
+  @@index([workspaceId, active, period])
+}
+
+model BudgetNotificationState {
+  id                 String            @id @default(uuid()) @db.Uuid
+  workspaceId        String            @db.Uuid
+  budgetId           String            @db.Uuid
+  periodKey          String
+  lastNotifiedStatus BudgetAlertStatus
+  lastNotifiedAt     DateTime
+  workspace          Workspace         @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  budget             Budget            @relation(fields: [budgetId], references: [id], onDelete: Restrict)
+  createdAt          DateTime          @default(now())
+  updatedAt          DateTime          @updatedAt
+
+  @@unique([workspaceId, budgetId, periodKey])
+  @@index([workspaceId, periodKey])
+  @@index([budgetId, periodKey])
+}
+
+model DailyCloseDelivery {
+  id             String                   @id @default(uuid()) @db.Uuid
+  workspaceId    String                   @db.Uuid
+  localDate      DateTime                 @db.Date
+  channel        String
+  conversationId String
+  status         DailyCloseDeliveryStatus
+  attemptedAt    DateTime
+  deliveredAt    DateTime?
+  telegramMessageId      Int?
+  telegramMessageDateUtc DateTime?
+  telegramChatId         String?
+  telegramResponseOk     Boolean?
+  error          String?
+  workspace      Workspace                @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  createdAt      DateTime                 @default(now())
+  updatedAt      DateTime                 @updatedAt
+
+  @@unique([workspaceId, localDate, channel, conversationId])
+  @@index([workspaceId, status])
+  @@index([status, attemptedAt])
+}
+
+model InvoiceRequest {
+  id                String                  @id @default(uuid()) @db.Uuid
+  workspaceId       String                  @db.Uuid
+  expenseId         String?                 @db.Uuid
+  sourceEvidenceId  String?                 @db.Uuid
+  merchantName      String
+  merchantKey       String
+  status            InvoiceRequestStatus    @default(PENDING)
+  channel           String
+  taxProfileId      String?                 @db.Uuid
+  requestedByUserId String                  @db.Uuid
+  failureReason     String?
+  workspace         Workspace               @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  expense           Expense?                @relation(fields: [expenseId], references: [id], onDelete: Restrict)
+  taxProfile        TaxProfile?             @relation(fields: [taxProfileId], references: [id], onDelete: Restrict)
+  requestedBy       User                    @relation(fields: [requestedByUserId], references: [id], onDelete: Restrict)
+  attempts          InvoiceRequestAttempt[]
+  documents         InvoiceDocument[]
+  createdAt         DateTime                @default(now())
+  updatedAt         DateTime                @updatedAt
+  completedAt       DateTime?
+
+  @@unique([workspaceId, expenseId, taxProfileId, merchantKey])
+  @@unique([workspaceId, sourceEvidenceId, taxProfileId, merchantKey])
+  @@index([workspaceId, status, createdAt])
+  @@index([taxProfileId, status])
+  @@index([requestedByUserId, createdAt])
+}
+
+model InvoiceRequestAttempt {
+  id               String                      @id @default(uuid()) @db.Uuid
+  invoiceRequestId String                      @db.Uuid
+  attemptNumber    Int
+  adapterKey       String
+  status           InvoiceRequestAttemptStatus @default(PROCESSING)
+  startedAt        DateTime                    @default(now())
+  finishedAt       DateTime?
+  errorCode        String?
+  errorMessage     String?
+  invoiceRequest   InvoiceRequest              @relation(fields: [invoiceRequestId], references: [id], onDelete: Restrict)
+  createdAt        DateTime                    @default(now())
+
+  @@unique([invoiceRequestId, attemptNumber])
+  @@index([invoiceRequestId, status])
+}
+
+model InvoiceDocument {
+  id               String              @id @default(uuid()) @db.Uuid
+  invoiceRequestId String              @db.Uuid
+  documentType     InvoiceDocumentType
+  fileName         String
+  storageReference String
+  checksum         String              @db.Char(64)
+  invoiceRequest   InvoiceRequest      @relation(fields: [invoiceRequestId], references: [id], onDelete: Restrict)
+  createdAt        DateTime            @default(now())
+
+  @@unique([invoiceRequestId, documentType])
+  @@index([checksum])
+}
+
+model MerchantInvoiceProfile {
+  id            String                       @id @default(uuid()) @db.Uuid
+  merchantKey   String                       @unique
+  displayName   String
+  strategyType  MerchantInvoiceStrategyType?
+  active        Boolean                      @default(true)
+  adapterKey    String?
+  configuration Json                         @default("{}")
+  createdAt     DateTime                     @default(now())
+  updatedAt     DateTime                     @updatedAt
+
+  @@index([active])
+}
+
+model BudgetMatchingRule {
+  id                 String                    @id @default(uuid()) @db.Uuid
+  budgetId           String                    @db.Uuid
+  ruleType           BudgetRuleType
+  value              String
+  normalizedValue    String
+  priority           Int
+  active             Boolean                   @default(true)
+  budget             Budget                    @relation(fields: [budgetId], references: [id], onDelete: Restrict)
+  expenseAssignments ExpenseBudgetAssignment[]
+  createdAt          DateTime                  @default(now())
+  updatedAt          DateTime                  @updatedAt
+
+  @@unique([budgetId, ruleType, normalizedValue])
+  @@index([budgetId, ruleType])
+  @@index([normalizedValue])
+  @@index([active])
+}
+
+model ExpenseBudgetAssignment {
+  id            String                        @id @default(uuid()) @db.Uuid
+  workspaceId   String                        @db.Uuid
+  expenseId     String                        @unique @db.Uuid
+  budgetId      String?                       @db.Uuid
+  status        ExpenseBudgetAssignmentStatus
+  confidence    Decimal?                      @db.Decimal(5, 4)
+  matchedRuleId String?                       @db.Uuid
+  reason        String
+  assignedBy    ExpenseBudgetAssignedBy
+  workspace     Workspace                     @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  expense       Expense                       @relation(fields: [expenseId], references: [id], onDelete: Restrict)
+  budget        Budget?                       @relation(fields: [budgetId], references: [id], onDelete: Restrict)
+  matchedRule   BudgetMatchingRule?           @relation(fields: [matchedRuleId], references: [id], onDelete: Restrict)
+  createdAt     DateTime                      @default(now())
+  updatedAt     DateTime                      @updatedAt
+
+  @@index([workspaceId, status])
+  @@index([budgetId, status])
+  @@index([matchedRuleId])
+}
+
+model Expense {
+  id                   String                   @id @default(uuid()) @db.Uuid
+  workspaceId          String                   @db.Uuid
+  sourceEventId        String                   @unique @db.Uuid
+  sourceChannel        String?
+  sourceConversationId String?
+  evidenceSha256       String?                  @db.Char(64)
+  merchantName         String
+  description          String?
+  occurredAt           DateTime
+  originalAmount       Decimal                  @db.Decimal(19, 4)
+  originalCurrency     String                   @db.VarChar(3)
+  exchangeRate         Decimal                  @db.Decimal(19, 8)
+  baseAmount           Decimal                  @db.Decimal(19, 4)
+  category             String?
+  paymentMethod        String?
+  paymentLast4         String?                  @db.VarChar(4)
+  spenderName          String
+  paymentInstrumentId  String?                  @db.Uuid
+  paymentInstrument    PaymentInstrument?       @relation(fields: [paymentInstrumentId], references: [id], onDelete: Restrict)
+  status               ExpenseStatus            @default(REGISTERED)
+  cancelledAt          DateTime?
+  cancelledByUserId    String?                  @db.Uuid
+  cancellationReason   String?
+  cancelledBy          User?                    @relation("CancelledExpenses", fields: [cancelledByUserId], references: [id], onDelete: Restrict)
+  workspace            Workspace                @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  budgetAssignment     ExpenseBudgetAssignment?
+  invoiceRequests      InvoiceRequest[]
+  createdAt            DateTime                 @default(now())
+  updatedAt            DateTime                 @updatedAt
+
+  @@unique([workspaceId, evidenceSha256])
+  @@index([workspaceId, occurredAt])
+  @@index([workspaceId, status])
+  @@index([workspaceId, sourceChannel, sourceConversationId, createdAt])
+  @@index([paymentInstrumentId])
+  @@index([cancelledByUserId])
+}
+
+model PaymentInstrument {
+  id          String    @id @default(uuid()) @db.Uuid
+  workspaceId String    @db.Uuid
+  type        String
+  name        String
+  bank        String?
+  last4       String?   @db.VarChar(4)
+  holderName  String
+  aliases     String[]  @default([])
+  active      Boolean   @default(true)
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  expenses    Expense[]
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@unique([workspaceId, type, last4])
+  @@index([workspaceId, active])
+}
+
+model ExpenseConversation {
+  id             String    @id @default(uuid()) @db.Uuid
+  workspaceId    String    @db.Uuid
+  externalChatId String
+  draft          Json
+  missingFields  String[]
+  workspace      Workspace @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  @@unique([workspaceId, externalChatId])
+  @@index([workspaceId, updatedAt])
+}
+
+model ConversationSession {
+  id                   String                    @id @default(uuid()) @db.Uuid
+  workspaceId          String                    @db.Uuid
+  sourceChannel        String
+  sourceConversationId String
+  userId               String                    @db.Uuid
+  workerId             String
+  intentType           ConversationIntentType
+  status               ConversationSessionStatus @default(ACTIVE)
+  contextJson          Json
+  pendingField         String?
+  workspace            Workspace                 @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  user                 User                      @relation(fields: [userId], references: [id], onDelete: Restrict)
+  createdAt            DateTime                  @default(now())
+  updatedAt            DateTime                  @updatedAt
+  expiresAt            DateTime?
+  completedAt          DateTime?
+  cancelledAt          DateTime?
+
+  @@index([workspaceId, sourceChannel, sourceConversationId, userId, status])
+  @@index([expiresAt, status])
+}
+
+model User {
+  id                         String                 @id @default(uuid()) @db.Uuid
+  email                      String                 @unique
+  name                       String
+  platformRole               PlatformRole?
+  memberships                AccountMember[]
+  requestedTaxProfiles       TaxProfileRequest[]    @relation("RequestedBy")
+  reviewedTaxProfileRequests TaxProfileRequest[]    @relation("ReviewedBy")
+  taxProfileAccess           UserTaxProfileAccess[]
+  auditEvents                AuditEvent[]           @relation("AuditActor")
+  cancelledExpenses          Expense[]              @relation("CancelledExpenses")
+  conversationSessions       ConversationSession[]
+  requestedInvoices          InvoiceRequest[]
+  approvedTaxProfiles        TaxProfile[]           @relation("TaxProfileApprover")
+  createdAt                  DateTime               @default(now())
+  updatedAt                  DateTime               @updatedAt
+  deletedAt                  DateTime?
+
+  @@index([platformRole])
+  @@index([deletedAt])
+}
+
+model AccountMember {
+  id        String      @id @default(uuid()) @db.Uuid
+  accountId String      @db.Uuid
+  userId    String      @db.Uuid
+  role      AccountRole
+  account   Account     @relation(fields: [accountId], references: [id], onDelete: Restrict)
+  user      User        @relation(fields: [userId], references: [id], onDelete: Restrict)
+  createdAt DateTime    @default(now())
+  updatedAt DateTime    @updatedAt
+  deletedAt DateTime?
+
+  @@unique([accountId, userId])
+  @@index([userId, deletedAt])
+  @@index([accountId, role])
+}
+
+model TaxProfile {
+  id                String                 @id @default(uuid()) @db.Uuid
+  accountId         String                 @db.Uuid
+  workspaceId       String                 @db.Uuid
+  rfc               String                 @db.VarChar(13)
+  legalName         String
+  status            TaxProfileStatus       @default(PENDING_VERIFICATION)
+  postalCode        String?                @db.VarChar(5)
+  taxRegime         String?
+  cfdiUse           String?
+  billingEmail      String?
+  approvedAt        DateTime?
+  approvedByUserId  String?                @db.Uuid
+  account           Account                @relation(fields: [accountId], references: [id], onDelete: Restrict)
+  workspace         Workspace              @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  approvedBy        User?                  @relation("TaxProfileApprover", fields: [approvedByUserId], references: [id], onDelete: Restrict)
+  sourceRequest     TaxProfileRequest?
+  userAccess        UserTaxProfileAccess[]
+  subscriptionItems SubscriptionItem[]
+  invoiceRequests   InvoiceRequest[]
+  createdAt         DateTime               @default(now())
+  updatedAt         DateTime               @updatedAt
+  deletedAt         DateTime?
+
+  @@unique([workspaceId, rfc])
+  @@index([workspaceId])
+  @@index([accountId, status])
+  @@index([deletedAt])
+}
+
+model TaxProfileRequest {
+  id              String                  @id @default(uuid()) @db.Uuid
+  accountId       String                  @db.Uuid
+  requestedById   String                  @db.Uuid
+  reviewedById    String?                 @db.Uuid
+  taxProfileId    String?                 @unique @db.Uuid
+  rfc             String                  @db.VarChar(13)
+  legalName       String
+  status          TaxProfileRequestStatus @default(SUBMITTED)
+  rejectionReason String?
+  account         Account                 @relation(fields: [accountId], references: [id], onDelete: Restrict)
+  requestedBy     User                    @relation("RequestedBy", fields: [requestedById], references: [id], onDelete: Restrict)
+  reviewedBy      User?                   @relation("ReviewedBy", fields: [reviewedById], references: [id], onDelete: Restrict)
+  taxProfile      TaxProfile?             @relation(fields: [taxProfileId], references: [id], onDelete: Restrict)
+  createdAt       DateTime                @default(now())
+  updatedAt       DateTime                @updatedAt
+  resolvedAt      DateTime?
+
+  @@index([accountId, status])
+  @@index([status, createdAt])
+  @@index([requestedById])
+}
+
+model UserTaxProfileAccess {
+  id           String     @id @default(uuid()) @db.Uuid
+  userId       String     @db.Uuid
+  taxProfileId String     @db.Uuid
+  user         User       @relation(fields: [userId], references: [id], onDelete: Restrict)
+  taxProfile   TaxProfile @relation(fields: [taxProfileId], references: [id], onDelete: Restrict)
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+  revokedAt    DateTime?
+
+  @@unique([userId, taxProfileId])
+  @@index([taxProfileId, revokedAt])
+}
+
+model Subscription {
+  id          String             @id @default(uuid()) @db.Uuid
+  accountId   String             @db.Uuid
+  status      SubscriptionStatus @default(ACTIVE)
+  currency    String             @default("MXN") @db.VarChar(3)
+  account     Account            @relation(fields: [accountId], references: [id], onDelete: Restrict)
+  items       SubscriptionItem[]
+  createdAt   DateTime           @default(now())
+  updatedAt   DateTime           @updatedAt
+  cancelledAt DateTime?
+
+  @@index([accountId, status])
+}
+
+model SubscriptionItem {
+  id             String                 @id @default(uuid()) @db.Uuid
+  subscriptionId String                 @db.Uuid
+  taxProfileId   String                 @db.Uuid
+  status         SubscriptionItemStatus @default(ACTIVE)
+  unitAmount     Int
+  subscription   Subscription           @relation(fields: [subscriptionId], references: [id], onDelete: Restrict)
+  taxProfile     TaxProfile             @relation(fields: [taxProfileId], references: [id], onDelete: Restrict)
+  createdAt      DateTime               @default(now())
+  updatedAt      DateTime               @updatedAt
+  cancelledAt    DateTime?
+
+  @@unique([subscriptionId, taxProfileId])
+  @@index([taxProfileId, status])
+}
+
+model AuditEvent {
+  id          String   @id @default(uuid()) @db.Uuid
+  accountId   String?  @db.Uuid
+  actorUserId String?  @db.Uuid
+  action      String
+  entityType  String
+  entityId    String   @db.Uuid
+  metadata    Json?
+  account     Account? @relation(fields: [accountId], references: [id], onDelete: Restrict)
+  actor       User?    @relation("AuditActor", fields: [actorUserId], references: [id], onDelete: Restrict)
+  createdAt   DateTime @default(now())
+
+  @@index([accountId, createdAt])
+  @@index([entityType, entityId])
+  @@index([actorUserId, createdAt])
+}

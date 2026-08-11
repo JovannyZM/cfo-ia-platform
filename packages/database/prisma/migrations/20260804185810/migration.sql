@@ -1,0 +1,2 @@
+-- RenameIndex
+ALTER INDEX "ConversationSession_workspaceId_sourceChannel_sourceConversatio" RENAME TO "ConversationSession_workspaceId_sourceChannel_sourceConvers_idx";

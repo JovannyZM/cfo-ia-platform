@@ -1,0 +1,11 @@
+{
+  "extends": "@cfo-ia/typescript-config/base.json",
+  "compilerOptions": {
+    "outDir": "dist",
+    "rootDir": ".",
+    "module": "CommonJS",
+    "moduleResolution": "Node",
+    "isolatedModules": false
+  },
+  "include": ["src", "prisma/seed.ts"]
+}

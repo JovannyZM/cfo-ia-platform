@@ -1,0 +1,29 @@
+:root {
+  color-scheme: dark;
+  font-family: Arial, sans-serif;
+  background: #111827;
+  color: #f9fafb;
+}
+body {
+  margin: 0;
+}
+main {
+  max-width: 720px;
+  margin: 15vh auto;
+  padding: 3rem;
+  background: #1f2937;
+  border: 1px solid #374151;
+  border-radius: 16px;
+}
+span {
+  color: #5eead4;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+}
+h1 {
+  font-size: 2.5rem;
+  margin-bottom: 0.5rem;
+}
+p {
+  color: #cbd5e1;
+}

@@ -1,0 +1,14 @@
+node_modules
+.pnpm-store/
+.pae-artifacts/
+.turbo
+dist
+.next
+coverage
+*.log
+.env
+.env.local
+.env.*
+!.env.example
+*.tsbuildinfo
+packages/database/prisma/dev.db
