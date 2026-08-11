@@ -25,6 +25,8 @@ export interface ExpenseEvidenceInterpretedPayload {
   readonly sourceConversationId?: string;
   readonly evidenceSha256?: string;
   readonly explicitBudgetName?: string;
+  readonly documentNumber?: string;
+  readonly requestedByUserId?: string;
 }
 
 export interface ExpenseEvidenceReceivedPayload {
@@ -34,6 +36,7 @@ export interface ExpenseEvidenceReceivedPayload {
   readonly sourceChannel?: string;
   readonly sourceConversationId?: string;
   readonly evidenceSha256?: string;
+  readonly requestedByUserId?: string;
 }
 
 export interface ExpenseEvidenceInterpretationFailedPayload {
@@ -62,6 +65,8 @@ export interface ExpenseRegisteredPayload {
   readonly sourceChannel?: string;
   readonly sourceConversationId?: string;
   readonly explicitBudgetName?: string;
+  readonly documentNumber?: string;
+  readonly requestedByUserId?: string;
 }
 
 export interface ExpenseInformationRequiredPayload {

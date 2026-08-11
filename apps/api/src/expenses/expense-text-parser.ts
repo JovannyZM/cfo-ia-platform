@@ -30,6 +30,7 @@ export function parseExpenseText(payload: ExpenseTextReceivedPayload) {
     inputSource: 'TEXT' as const,
     ...(payload.sourceChannel ? { sourceChannel: payload.sourceChannel } : {}),
     ...(payload.sourceConversationId ? { sourceConversationId: payload.sourceConversationId } : {}),
+    ...(payload.userId ? { requestedByUserId: payload.userId } : {}),
     ...(paymentMethod ? { paymentMethod } : {}),
     ...(spenderName ? { spenderName } : {}),
   };

@@ -121,7 +121,10 @@ export class ExpenseAssistantWorker implements Worker {
       where: { sourceEventId: event.eventId },
       include: { workspace: true },
     });
-    if (existing) return [this.toRegisteredEvent(existing, existing.workspace)];
+    if (existing) return [this.toRegisteredEvent(existing, existing.workspace, {
+      ...(payload.documentNumber ? { documentNumber: payload.documentNumber } : {}),
+      ...(payload.requestedByUserId ? { requestedByUserId: payload.requestedByUserId } : {}),
+    })];
 
     const workspace = await this.prisma.workspace.findUnique({
       where: { id: event.workspaceId },
@@ -230,8 +233,12 @@ export class ExpenseAssistantWorker implements Worker {
       return [this.toRegisteredEvent(
         expense,
         workspace,
-        payload.explicitBudgetName,
-        learnedInstrument?.name,
+        {
+          ...(payload.explicitBudgetName ? { explicitBudgetName: payload.explicitBudgetName } : {}),
+          ...(learnedInstrument?.name ? { paymentInstrumentName: learnedInstrument.name } : {}),
+          ...(payload.documentNumber ? { documentNumber: payload.documentNumber } : {}),
+          ...(payload.requestedByUserId ? { requestedByUserId: payload.requestedByUserId } : {}),
+        },
       )];
     } catch (error: unknown) {
       if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
@@ -246,14 +253,20 @@ export class ExpenseAssistantWorker implements Worker {
             include: { workspace: true },
           });
           if (duplicateEvidence) {
-            return [this.toRegisteredEvent(duplicateEvidence, duplicateEvidence.workspace)];
+            return [this.toRegisteredEvent(duplicateEvidence, duplicateEvidence.workspace, {
+              ...(payload.documentNumber ? { documentNumber: payload.documentNumber } : {}),
+              ...(payload.requestedByUserId ? { requestedByUserId: payload.requestedByUserId } : {}),
+            })];
           }
         }
         const duplicate = await this.prisma.expense.findUniqueOrThrow({
           where: { sourceEventId: event.eventId },
           include: { workspace: true },
         });
-        return [this.toRegisteredEvent(duplicate, duplicate.workspace)];
+        return [this.toRegisteredEvent(duplicate, duplicate.workspace, {
+          ...(payload.documentNumber ? { documentNumber: payload.documentNumber } : {}),
+          ...(payload.requestedByUserId ? { requestedByUserId: payload.requestedByUserId } : {}),
+        })];
       }
       throw error;
     }
@@ -262,8 +275,12 @@ export class ExpenseAssistantWorker implements Worker {
   private toRegisteredEvent(
     expense: Expense,
     workspace: Workspace,
-    explicitBudgetName?: string,
-    paymentInstrumentName?: string,
+    options: {
+      explicitBudgetName?: string;
+      paymentInstrumentName?: string;
+      documentNumber?: string;
+      requestedByUserId?: string;
+    } = {},
   ): DomainEvent<ExpenseRegisteredPayload> {
     return {
       eventId: randomUUID(),
@@ -284,10 +301,12 @@ export class ExpenseAssistantWorker implements Worker {
         ...(expense.paymentLast4 ? { paymentLast4: expense.paymentLast4 } : {}),
         spenderName: expense.spenderName,
         ...(expense.paymentInstrumentId ? { paymentInstrumentId: expense.paymentInstrumentId } : {}),
-        ...(paymentInstrumentName ? { paymentInstrumentName } : {}),
+        ...(options.paymentInstrumentName ? { paymentInstrumentName: options.paymentInstrumentName } : {}),
         ...(expense.sourceChannel ? { sourceChannel: expense.sourceChannel } : {}),
         ...(expense.sourceConversationId ? { sourceConversationId: expense.sourceConversationId } : {}),
-        ...(explicitBudgetName ? { explicitBudgetName } : {}),
+        ...(options.explicitBudgetName ? { explicitBudgetName: options.explicitBudgetName } : {}),
+        ...(options.documentNumber ? { documentNumber: options.documentNumber } : {}),
+        ...(options.requestedByUserId ? { requestedByUserId: options.requestedByUserId } : {}),
       },
     };
   }

@@ -39,11 +39,13 @@ function harness(input: {
       captchaDetected: false, loginDetected: false, legalMessages: [],
     }),
     fillField: vi.fn().mockResolvedValue(undefined),
+    interactWithField: vi.fn().mockResolvedValue(undefined),
     clickAction: vi.fn().mockResolvedValue({
       anchorTotalCount: 1, anchorVisibleCount: 1, formVisibleCount: 1,
       totalCount: 1, visibleCount: 1, containerSelector: 'form',
     }),
     waitForHttpResponse: vi.fn(() => input.validationResponse ?? Promise.resolve({ requestObserved: true, responseReceived: true, status: 200, durationMs: 25 })),
+    waitForStageTransition: vi.fn().mockResolvedValue({ matchedFields: 1, expectedFields: 1, textMatched: false }),
     waitForSettled: vi.fn().mockResolvedValue(undefined),
   };
   const sessions = {
@@ -102,7 +104,11 @@ describe('Portal Automation Engine Costco probe', () => {
   it('does not expose any form action or irreversible browser method', async () => {
     const { service, browser } = harness();
     await service.probeCostco('workspace-id');
-    expect(Object.keys(browser).sort()).toEqual(['captureScreenshot', 'clickAction', 'closeSession', 'createSession', 'extractVisibleElements', 'fillField', 'getPageMetadata', 'navigate', 'waitForHttpResponse', 'waitForPortalReady', 'waitForSettled']);
+    expect(Object.keys(browser).sort()).toEqual([
+      'captureScreenshot', 'clickAction', 'closeSession', 'createSession', 'extractVisibleElements',
+      'fillField', 'getPageMetadata', 'interactWithField', 'navigate', 'waitForHttpResponse',
+      'waitForPortalReady', 'waitForSettled', 'waitForStageTransition',
+    ]);
   });
 
   it('honors the kill switch and persists failure', async () => {

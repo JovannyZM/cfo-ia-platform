@@ -12,10 +12,13 @@ import {
   type BrowserSession,
   type BrowserSessionOptions,
   type FormLocatorDescriptor,
+  type FieldInteractionDescriptor,
   type NavigationResult,
   type HttpResponseMatcher,
   type ObservedHttpResponse,
   type PageMetadata,
+  type StageTransitionDescriptor,
+  type StageTransitionEvidence,
   type VisibleElements,
   isAllowedPortalUrl,
 } from './browser-provider';
@@ -182,8 +185,44 @@ export class PlaywrightBrowserProvider implements BrowserProvider {
   }
 
   async fillField(session: BrowserSession, name: string, value: string): Promise<void> {
-    const field = this.getSession(session).page.locator(`[name="${escapeAttribute(name)}"]`).first();
-    await tracePlaywright('locator.fill', `[name="${name}"]`, this.getSession(session).options.timeoutMs, () => field.fill(value));
+    await this.interactWithField(session, {
+      name,
+      control: 'text',
+      expectedVisibleCount: 1,
+    }, value);
+  }
+
+  async interactWithField(
+    session: BrowserSession,
+    descriptor: FieldInteractionDescriptor,
+    value: string,
+  ): Promise<void> {
+    const active = this.getSession(session);
+    const selector = fieldDescriptorLabel(descriptor);
+    const candidates = resolveFieldLocator(active.page, descriptor);
+    const totalCount = await tracePlaywright('locator.count', selector, 0, () => candidates.count());
+    const visibleIndexes: number[] = [];
+    for (let index = 0; index < totalCount; index += 1) {
+      if (await tracePlaywright('locator.isVisible', selector, 0, () => candidates.nth(index).isVisible())) {
+        visibleIndexes.push(index);
+      }
+    }
+    if (visibleIndexes.length !== descriptor.expectedVisibleCount || visibleIndexes.length !== 1) {
+      throw new FieldLocatorAmbiguousError(descriptor, totalCount, visibleIndexes.length);
+    }
+    const field = candidates.nth(visibleIndexes[0]!);
+    if (descriptor.control === 'select') {
+      await tracePlaywright('locator.selectOption', selector, active.options.timeoutMs, () => field.selectOption(value));
+    } else {
+      await tracePlaywright('locator.fill', selector, active.options.timeoutMs, () => field.fill(value));
+    }
+    for (const event of descriptor.events ?? []) {
+      if (event === 'blur') {
+        await tracePlaywright('locator.blur', selector, active.options.timeoutMs, () => field.blur());
+      } else {
+        await tracePlaywright('locator.dispatchEvent', `${selector}:${event}`, active.options.timeoutMs, () => field.dispatchEvent(event));
+      }
+    }
   }
 
   async clickAction(
@@ -192,14 +231,17 @@ export class PlaywrightBrowserProvider implements BrowserProvider {
     descriptor: ActionLocatorDescriptor,
   ): Promise<ActionLocatorResult> {
     const page = this.getSession(session).page;
-    const anchors = page.locator(formDescriptor.anchorInputSelector);
+    const anchorSelector = formDescriptor.anchorInputSelector ?? formDescriptor.anchorLabel ?? '';
+    const anchors = formDescriptor.anchorInputSelector
+      ? page.locator(formDescriptor.anchorInputSelector)
+      : page.getByLabel(formDescriptor.anchorLabel ?? '', { exact: true });
     const anchorTotalCount = await tracePlaywright(
-      'locator.count', formDescriptor.anchorInputSelector, 0, () => anchors.count(),
+      'locator.count', anchorSelector, 0, () => anchors.count(),
     );
     const visibleAnchorIndexes: number[] = [];
     for (let index = 0; index < anchorTotalCount; index += 1) {
       if (await tracePlaywright(
-        'locator.isVisible', formDescriptor.anchorInputSelector, 0, () => anchors.nth(index).isVisible(),
+        'locator.isVisible', anchorSelector, 0, () => anchors.nth(index).isVisible(),
       )) visibleAnchorIndexes.push(index);
     }
     const anchorVisibleCount = visibleAnchorIndexes.length;
@@ -257,6 +299,33 @@ export class PlaywrightBrowserProvider implements BrowserProvider {
     active.pendingResponses.add(observation);
     void observation.finally(() => active.pendingResponses.delete(observation));
     return observation;
+  }
+
+  async waitForStageTransition(
+    session: BrowserSession,
+    descriptor: StageTransitionDescriptor,
+    timeoutMs: number,
+  ): Promise<StageTransitionEvidence> {
+    const page = this.getSession(session).page;
+    const fieldLocators = (descriptor.visibleFields ?? []).map((field) => ({
+      label: field.css ?? field.name ?? field.label ?? 'stage-field',
+      locator: resolveFieldLocator(page, field),
+    }));
+    const fieldWaits = fieldLocators.map(({ label, locator }) =>
+      tracePlaywright('locator.waitFor', label, timeoutMs, () => locator.waitFor({ state: 'visible', timeout: timeoutMs })));
+    const textWait = descriptor.visibleText
+      ? tracePlaywright('getByText.waitFor', descriptor.visibleText, timeoutMs, () =>
+        page.getByText(descriptor.visibleText!, { exact: false }).waitFor({ state: 'visible', timeout: timeoutMs }))
+      : undefined;
+    const waits = [...fieldWaits, ...(textWait ? [textWait] : [])];
+    if (waits.length === 0) throw new Error('Stage transition requires visible evidence');
+    if (descriptor.match === 'all') await Promise.all(waits);
+    else await Promise.any(waits);
+    return {
+      matchedFields: descriptor.match === 'all' ? fieldLocators.length : Math.min(fieldLocators.length, 1),
+      expectedFields: fieldLocators.length,
+      textMatched: descriptor.match === 'all' ? Boolean(textWait) : Boolean(textWait && fieldLocators.length === 0),
+    };
   }
 
   async waitForSettled(session: BrowserSession): Promise<void> {
@@ -350,6 +419,29 @@ function escapeAttribute(value: string): string {
   return value.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
 }
 
+function resolveFieldLocator(page: Page, descriptor: Pick<FieldInteractionDescriptor, 'css' | 'label' | 'name'>) {
+  if (descriptor.css) return page.locator(descriptor.css);
+  if (descriptor.label) return page.getByLabel(descriptor.label, { exact: true });
+  if (descriptor.name) return page.locator(`[name="${escapeAttribute(descriptor.name)}"]`);
+  throw new Error('Field locator descriptor requires css, label, or name');
+}
+
+function fieldDescriptorLabel(descriptor: Pick<FieldInteractionDescriptor, 'css' | 'label' | 'name'>): string {
+  return descriptor.css ?? descriptor.label ?? descriptor.name ?? 'field';
+}
+
+export class FieldLocatorAmbiguousError extends Error {
+  readonly code = 'FIELD_LOCATOR_AMBIGUOUS';
+
+  constructor(
+    readonly descriptor: FieldInteractionDescriptor,
+    readonly totalCount: number,
+    readonly visibleCount: number,
+  ) {
+    super(`FIELD_LOCATOR_AMBIGUOUS: expected one visible field; found ${visibleCount} visible of ${totalCount} total`);
+  }
+}
+
 export function assertFormAndActionResolution(
   formDescriptor: FormLocatorDescriptor,
   descriptor: ActionLocatorDescriptor,
@@ -372,7 +464,7 @@ function writeActionResolution(
   resolution: ActionLocatorResult,
 ): void {
   process.stderr.write(`${JSON.stringify({
-    component: 'PortalActionLocator', anchor: formDescriptor.anchorInputSelector,
+    component: 'PortalActionLocator', anchor: formDescriptor.anchorInputSelector ?? formDescriptor.anchorLabel,
     container: formDescriptor.containerSelector, ...resolution, expectedCount: descriptor.expectedCount,
   })}\n`);
 }
@@ -385,7 +477,7 @@ export class FormOrActionAmbiguousError extends Error {
     readonly descriptor: ActionLocatorDescriptor,
     readonly resolution: Omit<ActionLocatorResult, 'containerSelector'>,
   ) {
-    super(`FORM_OR_ACTION_AMBIGUOUS: expected one visible form anchored by ${formDescriptor.anchorInputSelector} and one visible action; found ${resolution.anchorVisibleCount} forms and ${resolution.visibleCount} actions`);
+    super(`FORM_OR_ACTION_AMBIGUOUS: expected one visible form anchored by ${formDescriptor.anchorInputSelector ?? formDescriptor.anchorLabel} and one visible action; found ${resolution.anchorVisibleCount} forms and ${resolution.visibleCount} actions`);
   }
 }
 

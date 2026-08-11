@@ -54,6 +54,7 @@ function harness(options: {
         request = { ...request, ...data };
         return Promise.resolve(request);
       }),
+      updateMany: vi.fn().mockResolvedValue({ count: 1 }),
     },
     invoiceRequestAttempt: {
       count: vi.fn(() => Promise.resolve(attempts.length)),
@@ -116,6 +117,22 @@ describe('InvoiceRequestsService', () => {
     expect(result.attempt).toMatchObject({ attemptNumber: 1, status: 'PROCESSING' });
     expect(attempts).toHaveLength(1);
     expect(audits[0]).toMatchObject({ action: INVOICE_AUDIT_ACTIONS.STARTED });
+  });
+
+  it('atomically claims a READY request once before starting automated PAE', async () => {
+    const h = harness();
+    const started = await h.service.tryStart(ids.workspace, ids.request, 'configured-adapter');
+    expect(started?.attempt).toMatchObject({ attemptNumber: 1, adapterKey: 'configured-adapter' });
+    expect(h.prisma.invoiceRequest.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ id: ids.request, status: InvoiceRequestStatus.READY }),
+    }));
+  });
+
+  it('does not create a duplicate attempt when another execution already claimed the request', async () => {
+    const h = harness();
+    h.prisma.invoiceRequest.updateMany.mockResolvedValueOnce({ count: 0 });
+    await expect(h.service.tryStart(ids.workspace, ids.request, 'configured-adapter')).resolves.toBeNull();
+    expect(h.prisma.invoiceRequestAttempt.create).not.toHaveBeenCalled();
   });
 
   it('records an auditable failure', async () => {

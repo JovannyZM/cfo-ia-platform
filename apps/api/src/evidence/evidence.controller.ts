@@ -158,6 +158,7 @@ export class EvidenceController {
           ...(body.sourceChannel ? { sourceChannel: body.sourceChannel } : {}),
           ...(body.sourceConversationId ? { sourceConversationId: body.sourceConversationId } : {}),
           evidenceSha256,
+          requestedByUserId: request.user.id,
         },
         createdAt: new Date(),
       };

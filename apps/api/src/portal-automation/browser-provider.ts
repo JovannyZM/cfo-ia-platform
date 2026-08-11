@@ -48,9 +48,30 @@ export interface PortalReadyAdapter {
 
 export type FormLocatorDescriptor = {
   anchorLabel?: string;
-  anchorInputSelector: string;
+  anchorInputSelector?: string;
   containerSelector: string;
   expectedVisibleCount: number;
+};
+
+export type FieldInteractionDescriptor = {
+  css?: string;
+  label?: string;
+  name?: string;
+  control: 'text' | 'select';
+  expectedVisibleCount: number;
+  events?: readonly ('input' | 'change' | 'blur')[];
+};
+
+export type StageTransitionDescriptor = {
+  visibleFields?: readonly Pick<FieldInteractionDescriptor, 'css' | 'label' | 'name'>[];
+  visibleText?: string;
+  match: 'all' | 'any';
+};
+
+export type StageTransitionEvidence = {
+  matchedFields: number;
+  expectedFields: number;
+  textMatched: boolean;
 };
 
 export type ActionLocatorDescriptor = {
@@ -86,6 +107,7 @@ export interface BrowserProvider {
   captureScreenshot(session: BrowserSession, reference: string): Promise<string>;
   extractVisibleElements(session: BrowserSession): Promise<VisibleElements>;
   fillField(session: BrowserSession, name: string, value: string): Promise<void>;
+  interactWithField(session: BrowserSession, descriptor: FieldInteractionDescriptor, value: string): Promise<void>;
   clickAction(
     session: BrowserSession,
     formDescriptor: FormLocatorDescriptor,
@@ -96,6 +118,11 @@ export interface BrowserProvider {
     matcher: HttpResponseMatcher,
     timeoutMs: number,
   ): Promise<ObservedHttpResponse>;
+  waitForStageTransition(
+    session: BrowserSession,
+    descriptor: StageTransitionDescriptor,
+    timeoutMs: number,
+  ): Promise<StageTransitionEvidence>;
   waitForSettled(session: BrowserSession): Promise<void>;
 }
 

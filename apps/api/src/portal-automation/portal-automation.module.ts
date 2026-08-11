@@ -5,6 +5,9 @@ import { BROWSER_PROVIDER } from './browser-provider';
 import { CostcoInvoiceReadOnlyAdapter } from './costco-invoice-read-only.adapter';
 import { PlaywrightBrowserProvider } from './playwright-browser.provider';
 import { PortalProbeService } from './portal-probe.service';
+import { PortalFlowService } from './portal-flow.service';
+import { PortalStageFlowEngine } from './portal-stage-flow';
+import { PortalAdapterRegistry } from './portal-adapter.registry';
 import { PortalSessionService } from './portal-session.service';
 
 @Module({
@@ -12,12 +15,14 @@ import { PortalSessionService } from './portal-session.service';
   providers: [
     PrismaService,
     PlaywrightBrowserProvider,
+    PortalAdapterRegistry,
     { provide: BROWSER_PROVIDER, useExisting: PlaywrightBrowserProvider },
     CostcoInvoiceReadOnlyAdapter,
     PortalSessionService,
     PortalProbeService,
+    PortalFlowService,
+    PortalStageFlowEngine,
   ],
-  exports: [PortalProbeService],
+  exports: [PortalProbeService, PortalFlowService, PortalStageFlowEngine, PortalAdapterRegistry],
 })
 export class PortalAutomationModule {}
-

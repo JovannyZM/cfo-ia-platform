@@ -24,6 +24,8 @@ export const expenseEvidenceInterpretedSchema = z.object({
   sourceConversationId: z.string().trim().min(1).optional(),
   evidenceSha256: z.string().regex(/^[a-f0-9]{64}$/).optional(),
   explicitBudgetName: z.string().trim().min(1).optional(),
+  documentNumber: z.string().trim().min(1).optional(),
+  requestedByUserId: z.string().uuid().optional(),
 });
 
 export type ExpenseEvidenceInterpretedDto = z.infer<

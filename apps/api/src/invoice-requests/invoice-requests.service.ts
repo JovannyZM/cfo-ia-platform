@@ -4,6 +4,7 @@ import {
   InvoiceRequestAttemptStatus,
   InvoiceRequestStatus,
   TaxProfileStatus,
+  Prisma,
 } from '@prisma/client';
 import { canTransitionInvoiceRequest } from '@cfo-ia/domain';
 import { PrismaService } from '../prisma.service';
@@ -79,8 +80,9 @@ export class InvoiceRequestsService {
     });
     if (existing) return existing;
     const status = taxProfile ? InvoiceRequestStatus.READY : InvoiceRequestStatus.NEEDS_TAX_DATA;
-    return this.prisma.$transaction(async (tx) => {
-      const request = await tx.invoiceRequest.create({
+    try {
+      return await this.prisma.$transaction(async (tx) => {
+        const request = await tx.invoiceRequest.create({
         data: {
           workspaceId: input.workspaceId,
           ...(parsed.expenseId ? { expenseId: parsed.expenseId } : {}),
@@ -91,12 +93,64 @@ export class InvoiceRequestsService {
           requestedByUserId: parsed.requestedByUserId,
         },
       });
-      await tx.auditEvent.create({ data: {
+        await tx.auditEvent.create({ data: {
         accountId: workspace.accountId, actorUserId: parsed.requestedByUserId,
         action: INVOICE_AUDIT_ACTIONS.CREATED, entityType: 'InvoiceRequest', entityId: request.id,
         metadata: { status, merchantKey },
       } });
-      return request;
+        return request;
+      });
+    } catch (error) {
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+        return this.prisma.invoiceRequest.findFirstOrThrow({
+          where: {
+            workspaceId: input.workspaceId, merchantKey,
+            taxProfileId: parsed.taxProfileId ?? null, ...sourceFilter,
+          },
+        });
+      }
+      throw error;
+    }
+  }
+
+  async tryStart(workspaceId: string, requestId: string, adapterKey: string) {
+    const request = await this.scopedRequest(workspaceId, requestId);
+    if (request.status !== InvoiceRequestStatus.READY) return null;
+    return this.prisma.$transaction(async (tx) => {
+      const claimed = await tx.invoiceRequest.updateMany({
+        where: { id: requestId, workspaceId, status: InvoiceRequestStatus.READY },
+        data: { status: InvoiceRequestStatus.PROCESSING, failureReason: null },
+      });
+      if (claimed.count !== 1) return null;
+      const attemptNumber = await tx.invoiceRequestAttempt.count({ where: { invoiceRequestId: requestId } }) + 1;
+      const attempt = await tx.invoiceRequestAttempt.create({ data: {
+        invoiceRequestId: requestId, attemptNumber, adapterKey,
+        status: InvoiceRequestAttemptStatus.PROCESSING,
+      } });
+      await tx.auditEvent.create({ data: {
+        accountId: request.workspace.accountId, actorUserId: request.requestedByUserId,
+        action: INVOICE_AUDIT_ACTIONS.STARTED, entityType: 'InvoiceRequest', entityId: requestId,
+        metadata: { attemptId: attempt.id, attemptNumber, adapterKey },
+      } });
+      return { request: { ...request, status: InvoiceRequestStatus.PROCESSING }, attempt };
+    });
+  }
+
+  async markAcceptedPending(workspaceId: string, requestId: string, attemptId: string) {
+    const request = await this.scopedRequest(workspaceId, requestId);
+    return this.prisma.$transaction(async (tx) => {
+      await tx.invoiceRequestAttempt.update({ where: { id: attemptId }, data: {
+        status: InvoiceRequestAttemptStatus.COMPLETED, finishedAt: new Date(),
+      } });
+      const updated = await tx.invoiceRequest.update({ where: { id: requestId }, data: {
+        status: InvoiceRequestStatus.PROCESSING, failureReason: null,
+      } });
+      await tx.auditEvent.create({ data: {
+        accountId: request.workspace.accountId, actorUserId: request.requestedByUserId,
+        action: 'INVOICE_REQUEST_ACCEPTED_PENDING', entityType: 'InvoiceRequest', entityId: requestId,
+        metadata: { attemptId },
+      } });
+      return updated;
     });
   }
 

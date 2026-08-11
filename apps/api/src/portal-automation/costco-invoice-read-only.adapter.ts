@@ -1,5 +1,7 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Optional } from '@nestjs/common';
 import type { ActionLocatorDescriptor, ActionLocatorResult, BrowserProvider, BrowserSession, FormLocatorDescriptor, PortalActionAdapter, VisibleField } from './browser-provider';
+import type { PortalFlowOutcome, PortalStageDescriptor, StagedPortalAdapter } from './portal-stage-flow';
+import { PortalAdapterRegistry, type AutomatedInvoicePortalContext } from './portal-adapter.registry';
 
 export const COSTCO_READ_ONLY_ADAPTER_KEY = 'COSTCO_INVOICE_READ_ONLY';
 export const COSTCO_INVOICE_URL = 'https://www3.costco.com.mx/facturacion';
@@ -27,6 +29,17 @@ export type CostcoInitialValidationInput = {
   rfc: string;
 };
 
+export type CostcoFiscalTaxProfile = {
+  status: string;
+  approvedAt: Date | string | null;
+  rfc: string;
+  legalName: string;
+  postalCode: string | null;
+  taxRegime: string | null;
+  cfdiUse: string | null;
+  billingEmail: string | null;
+};
+
 export type CostcoControlledProbeResult = CostcoReadOnlyProbeResult & {
   screenReached: string;
   statusMessages: readonly string[];
@@ -40,8 +53,15 @@ export type CostcoControlledProbeResult = CostcoReadOnlyProbeResult & {
 };
 
 @Injectable()
-export class CostcoInvoiceReadOnlyAdapter implements PortalActionAdapter<'CONTINUE'> {
+export class CostcoInvoiceReadOnlyAdapter implements PortalActionAdapter<'CONTINUE' | 'REQUEST'>, StagedPortalAdapter<'CONTINUE' | 'REQUEST'> {
   readonly adapterKey = COSTCO_READ_ONLY_ADAPTER_KEY;
+  readonly portalUrl = COSTCO_INVOICE_URL;
+  readonly allowedDomains = COSTCO_ALLOWED_DOMAINS;
+  readonly merchantKeys = ['COSTCO'] as const;
+
+  constructor(@Optional() registry?: PortalAdapterRegistry) {
+    registry?.register(this);
+  }
 
   getReadySelector(): string {
     return 'input[name="ticket"]';
@@ -56,14 +76,100 @@ export class CostcoInvoiceReadOnlyAdapter implements PortalActionAdapter<'CONTIN
     };
   }
 
-  getActionLocator(actionKey: 'CONTINUE'): ActionLocatorDescriptor {
-    if (actionKey !== 'CONTINUE') throw new Error(`Unsupported action: ${String(actionKey)}`);
-    return {
-      css: 'button#btnEnviar.basic-button',
-      text: 'Continuar',
-      visibleOnly: true,
-      expectedCount: 1,
+  getActionLocator(actionKey: 'CONTINUE' | 'REQUEST'): ActionLocatorDescriptor {
+    if (actionKey === 'CONTINUE') {
+      return { css: 'button#btnEnviar.basic-button', text: 'Continuar', visibleOnly: true, expectedCount: 1 };
+    }
+    if (actionKey === 'REQUEST') {
+      return { css: 'button.basic-button', text: 'Solicitar', visibleOnly: true, expectedCount: 1 };
+    }
+    throw new Error(`Unsupported action: ${String(actionKey)}`);
+  }
+
+  getStages(): readonly PortalStageDescriptor<'CONTINUE' | 'REQUEST'>[] {
+    const normalEvents = ['input', 'change', 'blur'] as const;
+    return [
+      {
+        key: 'IDENTIFY_PURCHASE',
+        readySelector: this.getReadySelector(),
+        fields: [
+          { inputKey: 'ticketOrOrder', locator: { name: 'ticket', control: 'text', expectedVisibleCount: 1, events: normalEvents } },
+          { inputKey: 'totalPaid', locator: { name: 'monto', control: 'text', expectedVisibleCount: 1, events: normalEvents } },
+          { inputKey: 'rfc', locator: { name: 'rfc', control: 'text', expectedVisibleCount: 1, events: normalEvents } },
+        ],
+        form: this.getFormLocator(),
+        actionKey: 'CONTINUE',
+        transition: {
+          visibleFields: [
+            { label: 'Nombre/Razón Social' },
+            { label: 'Código Postal' },
+            { label: 'Régimen Fiscal' },
+            { label: 'Uso de CFDI' },
+          ],
+          match: 'all',
+        },
+      },
+      {
+        key: 'TAX_DATA',
+        fields: [
+          { inputKey: 'legalName', locator: { label: 'Nombre/Razón Social', control: 'text', expectedVisibleCount: 1, events: normalEvents } },
+          { inputKey: 'postalCode', locator: { label: 'Código Postal', control: 'text', expectedVisibleCount: 1, events: normalEvents } },
+          { inputKey: 'taxRegime', locator: { label: 'Régimen Fiscal', control: 'select', expectedVisibleCount: 1, events: ['change', 'blur'] } },
+          { inputKey: 'cfdiUse', locator: { label: 'Uso de CFDI', control: 'select', expectedVisibleCount: 1, events: ['change', 'blur'] } },
+          { inputKey: 'billingEmail', locator: { label: 'Correo Electrónico', control: 'text', expectedVisibleCount: 1, events: normalEvents } },
+          { inputKey: 'billingEmailConfirmation', locator: { label: 'Confirmación de Correo', control: 'text', expectedVisibleCount: 1, events: normalEvents } },
+        ],
+        form: { anchorLabel: 'Nombre/Razón Social', containerSelector: 'form', expectedVisibleCount: 1 },
+        actionKey: 'REQUEST',
+        transition: {
+          visibleText: 'Su solicitud fue aceptada y en un plazo no mayor a 72 horas se informará del estatus',
+          match: 'all',
+        },
+      },
+    ];
+  }
+
+  resolveOutcome(stageKey: string): PortalFlowOutcome | undefined {
+    return stageKey === 'TAX_DATA' ? 'ACCEPTED_PENDING' : undefined;
+  }
+
+  buildFlowInput(
+    purchase: CostcoInitialValidationInput,
+    taxProfile: CostcoFiscalTaxProfile,
+  ): Readonly<Record<string, string>> {
+    if (taxProfile.status !== 'ACTIVE' || !taxProfile.approvedAt) {
+      throw new Error('TaxProfile must be active and approved');
+    }
+    const required = {
+      rfc: taxProfile.rfc,
+      legalName: taxProfile.legalName,
+      postalCode: taxProfile.postalCode,
+      taxRegime: taxProfile.taxRegime,
+      cfdiUse: taxProfile.cfdiUse,
+      billingEmail: taxProfile.billingEmail,
     };
+    const missing = Object.entries(required).filter(([, value]) => !value?.trim()).map(([key]) => key);
+    if (missing.length > 0) throw new Error(`TaxProfile is incomplete: ${missing.join(', ')}`);
+    const taxRegime = required.taxRegime!.match(/^\s*(\d{3})/)?.[1] ?? required.taxRegime!;
+    const cfdiUse = required.cfdiUse!.match(/^\s*([A-Z]\d{2})/i)?.[1]?.toUpperCase() ?? required.cfdiUse!;
+    return {
+      ticketOrOrder: purchase.ticketOrOrder,
+      totalPaid: purchase.totalPaid,
+      rfc: required.rfc,
+      legalName: required.legalName,
+      postalCode: required.postalCode!,
+      taxRegime,
+      cfdiUse,
+      billingEmail: required.billingEmail!,
+      billingEmailConfirmation: required.billingEmail!,
+    };
+  }
+
+  buildInvoiceFlowInput(context: AutomatedInvoicePortalContext): Readonly<Record<string, string>> {
+    return this.buildFlowInput(
+      { ticketOrOrder: context.documentNumber, totalPaid: context.totalAmount, rfc: context.taxProfile.rfc },
+      context.taxProfile,
+    );
   }
 
   async execute(

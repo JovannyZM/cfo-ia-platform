@@ -115,6 +115,8 @@ export class ExpenseInterpreterWorker implements Worker {
       ...(source.sourceChannel ? { sourceChannel: source.sourceChannel } : {}),
       ...(source.sourceConversationId ? { sourceConversationId: source.sourceConversationId } : {}),
       ...(source.evidenceSha256 ? { evidenceSha256: source.evidenceSha256 } : {}),
+      ...(result.documentNumber ? { documentNumber: result.documentNumber } : {}),
+      ...(source.requestedByUserId ? { requestedByUserId: source.requestedByUserId } : {}),
     };
 
     return {
@@ -172,6 +174,9 @@ export class ExpenseInterpreterWorker implements Worker {
         : {}),
       ...('evidenceSha256' in payload && typeof payload.evidenceSha256 === 'string'
         ? { evidenceSha256: payload.evidenceSha256 }
+        : {}),
+      ...('requestedByUserId' in payload && typeof payload.requestedByUserId === 'string'
+        ? { requestedByUserId: payload.requestedByUserId }
         : {}),
       ...('extractedText' in payload && typeof payload.extractedText === 'string'
         ? { extractedText: payload.extractedText }
