@@ -7,6 +7,7 @@ import type {
   BrowserProvider,
   BrowserSession,
   FormLocatorDescriptor,
+  ObservePortalActionInput,
 } from './browser-provider';
 import { CostcoInvoiceReadOnlyAdapter } from './costco-invoice-read-only.adapter';
 import { PortalStageFlowEngine, type PortalStageDescriptor, type StagedPortalAdapter } from './portal-stage-flow';
@@ -19,6 +20,18 @@ const resolution = {
   totalCount: 1,
   visibleCount: 1,
   containerSelector: 'form',
+};
+const observation = {
+  stageKey: 'STAGE', actionKey: 'ACTION', outcome: 'STAGE_TRANSITION' as const,
+  startedAt: new Date(0).toISOString(), finishedAt: new Date(1).toISOString(),
+  actionResolution: resolution,
+  transitionEvidence: { matchedFields: 1, expectedFields: 1, textMatched: false },
+  request: { observed: false, redirects: [] },
+  networkErrors: [], javascriptErrors: [], consoleMessages: [],
+  before: { url: 'https://portal.example/start', action: { visible: true, enabled: true, disabled: false, ariaDisabled: null }, statusMessages: [], currentStageFieldsVisible: {}, nextStageFieldsVisible: {} },
+  after: { url: 'https://portal.example/start', action: { visible: true, enabled: true, disabled: false, ariaDisabled: null }, statusMessages: [], currentStageFieldsVisible: {}, nextStageFieldsVisible: {} },
+  resolved: { url: 'https://portal.example/start', action: { visible: true, enabled: true, disabled: false, ariaDisabled: null }, statusMessages: [], currentStageFieldsVisible: {}, nextStageFieldsVisible: {} },
+  screenshots: { before: new Uint8Array(), after: new Uint8Array(), resolved: new Uint8Array(), mimeType: 'image/png' as const },
 };
 
 function browserHarness(): BrowserProvider {
@@ -33,6 +46,8 @@ function browserHarness(): BrowserProvider {
     fillField: vi.fn().mockResolvedValue(undefined),
     interactWithField: vi.fn().mockResolvedValue(undefined),
     clickAction: vi.fn().mockResolvedValue(resolution),
+    observeAction: vi.fn((_session: BrowserSession, input: ObservePortalActionInput) =>
+      Promise.resolve({ ...observation, stageKey: input.stageKey, actionKey: input.actionKey })),
     waitForHttpResponse: vi.fn().mockResolvedValue({ requestObserved: false, responseReceived: false, status: null, durationMs: null }),
     waitForStageTransition: vi.fn().mockResolvedValue({ matchedFields: 1, expectedFields: 1, textMatched: false }),
     waitForSettled: vi.fn().mockResolvedValue(undefined),
@@ -72,9 +87,7 @@ describe('PortalStageFlowEngine', () => {
     const stages = [stage('ONE', 'first', 'NEXT'), stage('TWO', 'second', 'SUBMIT')];
     const result = await new PortalStageFlowEngine().execute(browser, session, adapter(stages), { first: 'a', second: 'b' }, 5_000);
     expect(browser.interactWithField).toHaveBeenCalledTimes(2);
-    expect(browser.clickAction).toHaveBeenCalledTimes(2);
-    expect(browser.waitForStageTransition).toHaveBeenCalledTimes(2);
-    expect(vi.mocked(browser.clickAction).mock.invocationCallOrder[0]).toBeLessThan(vi.mocked(browser.waitForStageTransition).mock.invocationCallOrder[0]!);
+    expect(browser.observeAction).toHaveBeenCalledTimes(2);
     expect(result.stages.map((entry) => entry.stageKey)).toEqual(['ONE', 'TWO']);
   });
 
@@ -82,7 +95,7 @@ describe('PortalStageFlowEngine', () => {
     const browser = browserHarness();
     const stages = [stage('ONE', 'first', 'NEXT'), stage('TWO', 'second', 'SUBMIT')];
     await new PortalStageFlowEngine().execute(browser, session, adapter(stages), { first: 'a', second: 'b' }, 5_000);
-    expect(vi.mocked(browser.waitForStageTransition).mock.invocationCallOrder[0])
+    expect(vi.mocked(browser.observeAction).mock.invocationCallOrder[0])
       .toBeLessThan(vi.mocked(browser.interactWithField).mock.invocationCallOrder[1]!);
   });
 

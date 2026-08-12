@@ -139,6 +139,7 @@ export class InvoiceAutomationWorker implements Worker {
         'INVOICE_REQUEST_AUTOMATION',
         adapter,
         input,
+        attemptId,
       );
       if (result.outcome === 'ACCEPTED_PENDING') {
         await this.requests.markAcceptedPending(workspaceId, requestId, attemptId);

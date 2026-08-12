@@ -2,6 +2,7 @@ import { Inject, Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { BROWSER_PROVIDER, type BrowserProvider, type BrowserSession } from './browser-provider';
 import { PortalSessionService } from './portal-session.service';
+import { PortalActionObservationService } from './portal-action-observation.service';
 import {
   PortalStageFlowEngine,
   type PortalFlowResult,
@@ -15,6 +16,7 @@ export class PortalFlowService {
     private readonly sessions: PortalSessionService,
     private readonly engine: PortalStageFlowEngine,
     private readonly config: ConfigService,
+    private readonly observations: PortalActionObservationService,
   ) {}
 
   async execute<ActionKey extends string>(
@@ -22,6 +24,7 @@ export class PortalFlowService {
     capability: string,
     adapter: StagedPortalAdapter<ActionKey>,
     input: Readonly<Record<string, string>>,
+    invoiceRequestAttemptId?: string,
   ): Promise<PortalFlowResult & { portalSessionId: string }> {
     const record = await this.sessions.create(workspaceId, capability, adapter.adapterKey);
     let browserSession: BrowserSession | undefined;
@@ -32,7 +35,14 @@ export class PortalFlowService {
       }
       await this.sessions.markRunning(record.id);
       browserSession = await this.browser.createSession({ allowedDomains: adapter.allowedDomains, timeoutMs });
-      const result = await this.engine.execute(this.browser, browserSession, adapter, input, timeoutMs);
+      const result = await this.engine.execute(
+        this.browser,
+        browserSession,
+        adapter,
+        input,
+        timeoutMs,
+        (observation) => this.observations.persist(record.id, invoiceRequestAttemptId, observation),
+      );
       await this.sessions.markNavigationCompleted(record.id, result.navigation.finalUrl);
       if (result.outcome === 'UNKNOWN_OUTCOME') {
         await this.sessions.markUnknownOutcome(record.id, 'PORTAL_FLOW_UNKNOWN_OUTCOME');

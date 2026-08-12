@@ -17,6 +17,7 @@ export type PageMetadata = {
 };
 
 export type HttpResponseMatcher = { method: string; pathname: string };
+export type ExpectedActionRequest = HttpResponseMatcher & { successStatuses?: readonly number[] };
 export type ObservedHttpResponse = {
   requestObserved: boolean;
   responseReceived: boolean;
@@ -93,6 +94,54 @@ export type ActionLocatorResult = {
   containerSelector: string;
 };
 
+export type PortalActionSnapshot = {
+  url: string;
+  action: { visible: boolean; enabled: boolean; disabled: boolean; ariaDisabled: string | null };
+  statusMessages: readonly string[];
+  currentStageFieldsVisible: Readonly<Record<string, boolean>>;
+  nextStageFieldsVisible: Readonly<Record<string, boolean>>;
+};
+
+export type PortalActionObservation = {
+  stageKey: string;
+  actionKey: string;
+  outcome: 'STAGE_TRANSITION' | 'ACTION_RESPONSE_REJECTED' | 'ACTION_RESPONSE_SUCCESS_BUT_STAGE_NOT_VISIBLE'
+    | 'EXPECTED_ACTION_REQUEST_NOT_OBSERVED' | 'REQUEST_FAILED' | 'PAGE_ERROR' | 'VISIBLE_ERROR' | 'TIMEOUT';
+  startedAt: string;
+  finishedAt: string;
+  actionResolution: ActionLocatorResult;
+  transitionEvidence?: StageTransitionEvidence;
+  request: {
+    observed: boolean;
+    method?: string;
+    url?: string;
+    status?: number;
+    durationMs?: number;
+    structure?: unknown;
+    responseContentType?: string;
+    responseSummary?: unknown;
+    redirects: readonly string[];
+  };
+  networkErrors: readonly string[];
+  javascriptErrors: readonly string[];
+  consoleMessages: readonly string[];
+  before: PortalActionSnapshot;
+  after: PortalActionSnapshot;
+  resolved: PortalActionSnapshot;
+  screenshots: { before: Uint8Array; after: Uint8Array; resolved: Uint8Array; mimeType: 'image/png' };
+};
+
+export type ObservePortalActionInput = {
+  stageKey: string;
+  actionKey: string;
+  form: FormLocatorDescriptor;
+  action: ActionLocatorDescriptor;
+  expectedRequest?: ExpectedActionRequest;
+  currentStageFields: readonly Pick<FieldInteractionDescriptor, 'css' | 'label' | 'name'>[];
+  transition: StageTransitionDescriptor;
+  timeoutMs: number;
+};
+
 export interface PortalActionAdapter<ActionKey extends string = string> extends PortalReadyAdapter {
   getFormLocator(): FormLocatorDescriptor;
   getActionLocator(actionKey: ActionKey): ActionLocatorDescriptor;
@@ -113,6 +162,7 @@ export interface BrowserProvider {
     formDescriptor: FormLocatorDescriptor,
     actionDescriptor: ActionLocatorDescriptor,
   ): Promise<ActionLocatorResult>;
+  observeAction(session: BrowserSession, input: ObservePortalActionInput): Promise<PortalActionObservation>;
   waitForHttpResponse(
     session: BrowserSession,
     matcher: HttpResponseMatcher,

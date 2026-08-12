@@ -44,6 +44,7 @@ function harness(input: {
       anchorTotalCount: 1, anchorVisibleCount: 1, formVisibleCount: 1,
       totalCount: 1, visibleCount: 1, containerSelector: 'form',
     }),
+    observeAction: vi.fn(),
     waitForHttpResponse: vi.fn(() => input.validationResponse ?? Promise.resolve({ requestObserved: true, responseReceived: true, status: 200, durationMs: 25 })),
     waitForStageTransition: vi.fn().mockResolvedValue({ matchedFields: 1, expectedFields: 1, textMatched: false }),
     waitForSettled: vi.fn().mockResolvedValue(undefined),
@@ -106,7 +107,7 @@ describe('Portal Automation Engine Costco probe', () => {
     await service.probeCostco('workspace-id');
     expect(Object.keys(browser).sort()).toEqual([
       'captureScreenshot', 'clickAction', 'closeSession', 'createSession', 'extractVisibleElements',
-      'fillField', 'getPageMetadata', 'interactWithField', 'navigate', 'waitForHttpResponse',
+      'fillField', 'getPageMetadata', 'interactWithField', 'navigate', 'observeAction', 'waitForHttpResponse',
       'waitForPortalReady', 'waitForSettled', 'waitForStageTransition',
     ]);
   });

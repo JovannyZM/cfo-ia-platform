@@ -4,7 +4,7 @@ import { ConfigService } from '@nestjs/config';
 import { mkdir } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { chromium, type Browser, type BrowserContext, type Page, type Request, type Response } from 'playwright';
+import { chromium, type Browser, type BrowserContext, type ConsoleMessage, type Page, type Request, type Response } from 'playwright';
 import {
   type BrowserProvider,
   type ActionLocatorDescriptor,
@@ -20,6 +20,9 @@ import {
   type StageTransitionDescriptor,
   type StageTransitionEvidence,
   type VisibleElements,
+  type ObservePortalActionInput,
+  type PortalActionObservation,
+  type PortalActionSnapshot,
   isAllowedPortalUrl,
 } from './browser-provider';
 
@@ -289,6 +292,147 @@ export class PlaywrightBrowserProvider implements BrowserProvider {
     return resolution;
   }
 
+  async observeAction(session: BrowserSession, input: ObservePortalActionInput): Promise<PortalActionObservation> {
+    const active = this.getSession(session);
+    const page = active.page;
+    const startedAt = new Date();
+    const networkErrors: string[] = [];
+    const javascriptErrors: string[] = [];
+    const consoleMessages: string[] = [];
+    let expectedRequest: Request | undefined;
+    let expectedResponse: Response | undefined;
+    let requestStartedAt: number | undefined;
+    let responseReceivedAt: number | undefined;
+
+    const matchesExpected = (method: string, rawUrl: string) => input.expectedRequest
+      ? method.toUpperCase() === input.expectedRequest.method.toUpperCase()
+        && safePathname(rawUrl) === input.expectedRequest.pathname
+      : false;
+    const onRequest = (request: Request) => {
+      if (matchesExpected(request.method(), request.url())) {
+        expectedRequest = request;
+        requestStartedAt = Date.now();
+      }
+    };
+    const onResponse = (response: Response) => {
+      const request = response.request();
+      if (matchesExpected(request.method(), request.url())) {
+        expectedResponse = response;
+        responseReceivedAt = Date.now();
+      }
+    };
+    const onRequestFailed = (request: Request) => {
+      if (matchesExpected(request.method(), request.url())) {
+        networkErrors.push(sanitizeDiagnosticText(request.failure()?.errorText ?? 'Request failed'));
+      }
+    };
+    const onPageError = (error: Error) => javascriptErrors.push(sanitizeDiagnosticText(error.message));
+    const onConsole = (message: ConsoleMessage) => {
+      if (message.type() === 'error' || message.type() === 'warning') {
+        consoleMessages.push(sanitizeDiagnosticText(message.text()));
+      }
+    };
+
+    page.on('request', onRequest);
+    page.on('response', onResponse);
+    page.on('requestfailed', onRequestFailed);
+    page.on('pageerror', onPageError);
+    page.on('console', onConsole);
+
+    try {
+      const before = await captureActionSnapshot(page, input);
+      const beforeScreenshot = await captureRedactedScreenshot(page);
+      const actionResolution = await this.clickAction(session, input.form, input.action);
+      const after = await captureActionSnapshot(page, input);
+      const afterScreenshot = await captureRedactedScreenshot(page);
+      const baselineMessages = new Set(before.statusMessages);
+      const deadline = Date.now() + input.timeoutMs;
+      let transitionEvidence: StageTransitionEvidence | undefined;
+      let outcome: PortalActionObservation['outcome'] = 'TIMEOUT';
+      let responseSeenAt: number | undefined;
+
+      while (Date.now() < deadline) {
+        transitionEvidence = await readTransitionEvidence(page, input.transition);
+        const currentMessages = await extractStatusMessages(page);
+        if (expectedResponse) {
+          responseSeenAt ??= Date.now();
+        }
+        const classified = classifyActionObservation({
+          transitionVisible: Boolean(transitionEvidence),
+          requestFailed: networkErrors.length > 0,
+          pageError: javascriptErrors.length > 0,
+          visibleError: currentMessages.some((message) => !baselineMessages.has(message)),
+          responseStatus: expectedResponse?.status(),
+          successStatuses: input.expectedRequest?.successStatuses,
+          responseGraceElapsed: responseSeenAt !== undefined && Date.now() - responseSeenAt >= 3_000,
+          timedOut: false,
+          expectedRequest: Boolean(input.expectedRequest),
+          requestObserved: Boolean(expectedRequest),
+        });
+        if (classified) { outcome = classified; break; }
+        await page.waitForTimeout(100);
+      }
+      if (outcome === 'TIMEOUT') outcome = classifyActionObservation({
+        transitionVisible: false,
+        requestFailed: networkErrors.length > 0,
+        pageError: javascriptErrors.length > 0,
+        visibleError: false,
+        responseStatus: expectedResponse?.status(),
+        successStatuses: input.expectedRequest?.successStatuses,
+        responseGraceElapsed: true,
+        timedOut: true,
+        expectedRequest: Boolean(input.expectedRequest),
+        requestObserved: Boolean(expectedRequest),
+      }) ?? 'TIMEOUT';
+
+      const resolved = await captureActionSnapshot(page, input);
+      const resolvedScreenshot = await captureRedactedScreenshot(page);
+      const responseDetails = expectedResponse ? await summarizeResponse(expectedResponse) : {};
+      return {
+        stageKey: input.stageKey,
+        actionKey: input.actionKey,
+        outcome,
+        startedAt: startedAt.toISOString(),
+        finishedAt: new Date().toISOString(),
+        actionResolution,
+        ...(transitionEvidence ? { transitionEvidence } : {}),
+        request: {
+          observed: Boolean(expectedRequest),
+          ...(expectedRequest ? {
+            method: expectedRequest.method(),
+            url: sanitizeDiagnosticUrl(expectedRequest.url()),
+            structure: summarizeRequestStructure(expectedRequest),
+            redirects: collectRedirects(expectedRequest),
+          } : { redirects: [] }),
+          ...(expectedResponse ? {
+            status: expectedResponse.status(),
+            ...(requestStartedAt === undefined || responseReceivedAt === undefined
+              ? {} : { durationMs: responseReceivedAt - requestStartedAt }),
+            ...responseDetails,
+          } : {}),
+        },
+        networkErrors,
+        javascriptErrors,
+        consoleMessages,
+        before,
+        after,
+        resolved,
+        screenshots: {
+          before: beforeScreenshot,
+          after: afterScreenshot,
+          resolved: resolvedScreenshot,
+          mimeType: 'image/png',
+        },
+      };
+    } finally {
+      page.off('request', onRequest);
+      page.off('response', onResponse);
+      page.off('requestfailed', onRequestFailed);
+      page.off('pageerror', onPageError);
+      page.off('console', onConsole);
+    }
+  }
+
   waitForHttpResponse(
     session: BrowserSession,
     matcher: HttpResponseMatcher,
@@ -352,6 +496,229 @@ export class PlaywrightBrowserProvider implements BrowserProvider {
       .filter(Boolean)
       .slice(0, 20));
   }
+}
+
+async function captureActionSnapshot(page: Page, input: ObservePortalActionInput): Promise<PortalActionSnapshot> {
+  const action = await resolveActionState(page, input.form, input.action);
+  return {
+    url: sanitizeDiagnosticUrl(page.url()),
+    action,
+    statusMessages: await extractStatusMessages(page),
+    currentStageFieldsVisible: await fieldVisibility(page, input.currentStageFields),
+    nextStageFieldsVisible: await fieldVisibility(page, input.transition.visibleFields ?? []),
+  };
+}
+
+async function resolveActionState(
+  page: Page,
+  form: FormLocatorDescriptor,
+  action: ActionLocatorDescriptor,
+): Promise<PortalActionSnapshot['action']> {
+  const anchors = form.anchorInputSelector
+    ? page.locator(form.anchorInputSelector)
+    : page.getByLabel(form.anchorLabel ?? '', { exact: true });
+  const count = await anchors.count();
+  for (let index = 0; index < count; index += 1) {
+    const anchor = anchors.nth(index);
+    if (!await anchor.isVisible()) continue;
+    const root = anchor.locator(`xpath=ancestor::${form.containerSelector}[1]`);
+    let candidates = action.role
+      ? root.getByRole(action.role, action.name ? { name: action.name, exact: true } : {})
+      : root.locator(action.css ?? '*');
+    if (action.css && action.role) candidates = candidates.and(root.locator(action.css));
+    const candidateCount = await candidates.count();
+    for (let candidateIndex = 0; candidateIndex < candidateCount; candidateIndex += 1) {
+      const candidate = candidates.nth(candidateIndex);
+      const visible = await candidate.isVisible();
+      const textMatches = action.text === undefined
+        || normalizeActionText(await candidate.textContent()) === normalizeActionText(action.text);
+      if (!visible || !textMatches) continue;
+      const disabled = await candidate.isDisabled().catch(() => false);
+      return {
+        visible: true,
+        enabled: !disabled,
+        disabled,
+        ariaDisabled: await candidate.getAttribute('aria-disabled'),
+      };
+    }
+  }
+  return { visible: false, enabled: false, disabled: false, ariaDisabled: null };
+}
+
+async function fieldVisibility(
+  page: Page,
+  fields: readonly Pick<FieldInteractionDescriptor, 'css' | 'label' | 'name'>[],
+): Promise<Record<string, boolean>> {
+  const result: Record<string, boolean> = {};
+  for (const field of fields) {
+    const label = field.css ?? field.name ?? field.label ?? 'field';
+    const locator = resolveFieldLocator(page, field);
+    const count = await locator.count();
+    let visible = false;
+    for (let index = 0; index < count; index += 1) visible ||= await locator.nth(index).isVisible();
+    result[label] = visible;
+  }
+  return result;
+}
+
+async function readTransitionEvidence(
+  page: Page,
+  descriptor: StageTransitionDescriptor,
+): Promise<StageTransitionEvidence | undefined> {
+  const fields = descriptor.visibleFields ?? [];
+  const visibility = await fieldVisibility(page, fields);
+  const matchedFields = Object.values(visibility).filter(Boolean).length;
+  const textMatched = descriptor.visibleText
+    ? await page.getByText(descriptor.visibleText, { exact: false }).isVisible().catch(() => false)
+    : false;
+  const checks = [...Object.values(visibility), ...(descriptor.visibleText ? [textMatched] : [])];
+  const matched = descriptor.match === 'all' ? checks.length > 0 && checks.every(Boolean) : checks.some(Boolean);
+  return matched ? { matchedFields, expectedFields: fields.length, textMatched } : undefined;
+}
+
+async function extractStatusMessages(page: Page): Promise<string[]> {
+  return page.locator('[role="alert"], .alert, [class*="error" i], [id*="error" i], .modal:visible')
+    .evaluateAll((elements: any[]) => elements
+      .filter((element) => {
+        const style = (globalThis as any).getComputedStyle(element);
+        const rect = element.getBoundingClientRect();
+        return style.visibility !== 'hidden' && style.display !== 'none' && rect.width > 0 && rect.height > 0;
+      })
+      .map((element) => String(element.textContent ?? '').replace(/\s+/g, ' ').trim())
+      .filter(Boolean)
+      .slice(0, 20))
+    .then((messages) => messages.map(sanitizeDiagnosticText));
+}
+
+async function captureRedactedScreenshot(page: Page): Promise<Uint8Array> {
+  await page.evaluate(() => {
+    const dom = (globalThis as any).document;
+    const style = dom.createElement('style');
+    style.id = 'pae-diagnostic-redaction';
+    style.textContent = 'input,select,textarea{color:transparent!important;text-shadow:0 0 10px #111!important;caret-color:transparent!important}';
+    dom.documentElement.appendChild(style);
+  });
+  try {
+    return await page.screenshot({ type: 'png', fullPage: false });
+  } finally {
+    await page.evaluate(() => (globalThis as any).document.querySelector('#pae-diagnostic-redaction')?.remove()).catch(() => undefined);
+  }
+}
+
+function safePathname(rawUrl: string): string {
+  try { return new URL(rawUrl).pathname; } catch { return ''; }
+}
+
+function sanitizeDiagnosticUrl(rawUrl: string): string {
+  try {
+    const url = new URL(rawUrl);
+    return `${url.protocol}//${url.host}${url.pathname}`;
+  } catch { return '[invalid-url]'; }
+}
+
+function sanitizeDiagnosticText(value: string): string {
+  return value
+    .replace(/\b[A-Z&Ñ]{3,4}\d{6}[A-Z0-9]{3}\b/gi, '[RFC]')
+    .replace(/\b\d{8,}\b/g, '[NUMBER]')
+    .replace(/(token|authorization|cookie|password|secret)\s*[:=]\s*[^\s,;]+/gi, '$1=[REDACTED]')
+    .slice(0, 500);
+}
+
+function summarizeRequestStructure(request: Request): unknown {
+  const data = request.postData();
+  if (!data) return null;
+  try {
+    const parsed = JSON.parse(data) as unknown;
+    return structureOnly(parsed);
+  } catch {
+    const params = new URLSearchParams(data);
+    if ([...params.keys()].length > 0) {
+      return Object.fromEntries([...new Set(params.keys())].map((key) => [key, { present: true, length: params.get(key)?.length ?? 0 }]));
+    }
+    return { type: 'opaque', length: data.length };
+  }
+}
+
+function structureOnly(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(structureOnly);
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(Object.entries(value).map(([key, entry]) => [key, structureOnly(entry)]));
+  }
+  if (typeof value === 'string') return { type: 'string', present: value.length > 0, length: value.length };
+  return { type: typeof value, present: value !== null };
+}
+
+async function summarizeResponse(response: Response): Promise<{
+  responseContentType?: string;
+  responseSummary?: unknown;
+}> {
+  const contentType = response.headers()['content-type'];
+  const text = await response.text().catch(() => '');
+  let summary: unknown;
+  try {
+    summary = sanitizeResponseValue(JSON.parse(text) as unknown);
+  } catch {
+    summary = text ? sanitizeDiagnosticText(text) : null;
+  }
+  return {
+    ...(contentType ? { responseContentType: contentType.split(';')[0] } : {}),
+    responseSummary: summary,
+  };
+}
+
+function sanitizeResponseValue(value: unknown, key = ''): unknown {
+  if (Array.isArray(value)) return value.slice(0, 20).map((entry) => sanitizeResponseValue(entry));
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(Object.entries(value).slice(0, 50).map(([entryKey, entry]) => [entryKey, sanitizeResponseValue(entry, entryKey)]));
+  }
+  if (typeof value === 'string') {
+    return /message|error|status|code|reason|detail/i.test(key)
+      ? sanitizeDiagnosticText(value)
+      : { type: 'string', present: value.length > 0, length: value.length };
+  }
+  return value;
+}
+
+function collectRedirects(request: Request): string[] {
+  const redirects: string[] = [];
+  let current = request.redirectedFrom();
+  while (current) {
+    redirects.unshift(sanitizeDiagnosticUrl(current.url()));
+    current = current.redirectedFrom();
+  }
+  return redirects;
+}
+
+export function classifyActionObservation(input: {
+  transitionVisible: boolean;
+  requestFailed: boolean;
+  pageError: boolean;
+  visibleError: boolean;
+  responseStatus?: number | undefined;
+  successStatuses?: readonly number[] | undefined;
+  responseGraceElapsed: boolean;
+  timedOut: boolean;
+  expectedRequest: boolean;
+  requestObserved: boolean;
+}): PortalActionObservation['outcome'] | undefined {
+  if (input.transitionVisible) return 'STAGE_TRANSITION';
+  if (input.requestFailed) return 'REQUEST_FAILED';
+  if (input.pageError) return 'PAGE_ERROR';
+  if (input.visibleError) return 'VISIBLE_ERROR';
+  if (input.responseStatus !== undefined) {
+    const successful = input.successStatuses?.length
+      ? input.successStatuses.includes(input.responseStatus)
+      : input.responseStatus >= 200 && input.responseStatus < 400;
+    if (!successful) return 'ACTION_RESPONSE_REJECTED';
+    if (input.responseGraceElapsed) return 'ACTION_RESPONSE_SUCCESS_BUT_STAGE_NOT_VISIBLE';
+  }
+  if (input.timedOut && input.expectedRequest && !input.requestObserved) return 'EXPECTED_ACTION_REQUEST_NOT_OBSERVED';
+  if (input.timedOut) return 'TIMEOUT';
+  return undefined;
+}
+
+export function sanitizePortalDiagnostic(value: string): string {
+  return sanitizeDiagnosticText(value);
 }
 
 type ResponseEventSource = {

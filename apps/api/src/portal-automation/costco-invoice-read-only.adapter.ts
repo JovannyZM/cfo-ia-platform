@@ -99,6 +99,11 @@ export class CostcoInvoiceReadOnlyAdapter implements PortalActionAdapter<'CONTIN
         ],
         form: this.getFormLocator(),
         actionKey: 'CONTINUE',
+        expectedActionRequest: {
+          method: 'POST',
+          pathname: '/portales/invoice/validateCheck',
+          successStatuses: [200, 201, 459],
+        },
         transition: {
           visibleFields: [
             { label: 'Nombre/Razón Social' },

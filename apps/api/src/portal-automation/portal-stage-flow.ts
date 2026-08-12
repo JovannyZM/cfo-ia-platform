@@ -8,6 +8,8 @@ import type {
   NavigationResult,
   StageTransitionDescriptor,
   StageTransitionEvidence,
+  ExpectedActionRequest,
+  PortalActionObservation,
 } from './browser-provider';
 
 export type PortalFlowOutcome = 'COMPLETED' | 'ACCEPTED_PENDING' | 'REJECTED' | 'UNKNOWN_OUTCOME';
@@ -24,6 +26,7 @@ export type PortalStageDescriptor<ActionKey extends string = string> = {
   form: FormLocatorDescriptor;
   actionKey: ActionKey;
   transition: StageTransitionDescriptor;
+  expectedActionRequest?: ExpectedActionRequest;
 };
 
 export interface StagedPortalAdapter<ActionKey extends string = string> {
@@ -55,6 +58,7 @@ export class PortalStageFlowEngine {
     adapter: StagedPortalAdapter<ActionKey>,
     input: Readonly<Record<string, string>>,
     timeoutMs: number,
+    onObservation?: (observation: PortalActionObservation) => Promise<void>,
   ): Promise<PortalFlowResult> {
     const navigation = await provider.navigate(session, adapter.portalUrl);
     const executions: PortalStageExecution[] = [];
@@ -67,17 +71,32 @@ export class PortalStageFlowEngine {
         if (value === undefined) throw new MissingPortalInputError(stage.key, field.inputKey);
         await provider.interactWithField(session, field.locator, value);
       }
-      const actionResolution = await provider.clickAction(
-        session,
-        stage.form,
-        adapter.getActionLocator(stage.actionKey),
-      );
-      const transitionEvidence = await provider.waitForStageTransition(session, stage.transition, timeoutMs);
+      const observation = await provider.observeAction(session, {
+        stageKey: stage.key,
+        actionKey: String(stage.actionKey),
+        form: stage.form,
+        action: adapter.getActionLocator(stage.actionKey),
+        ...(stage.expectedActionRequest ? { expectedRequest: stage.expectedActionRequest } : {}),
+        currentStageFields: stage.fields.map((field) => field.locator),
+        transition: stage.transition,
+        timeoutMs,
+      });
+      await onObservation?.(observation);
+      const actionResolution = observation.actionResolution;
+      if (!observation.transitionEvidence) throw new PortalActionObservationError(observation);
+      const transitionEvidence = observation.transitionEvidence;
       executions.push({ stageKey: stage.key, actionResolution, transitionEvidence });
       outcome = adapter.resolveOutcome(stage.key, transitionEvidence) ?? outcome;
     }
 
     return { adapterKey: adapter.adapterKey, outcome, navigation, stages: executions };
+  }
+}
+
+export class PortalActionObservationError extends Error {
+  readonly code = 'PORTAL_ACTION_OBSERVATION_FAILED';
+  constructor(readonly observation: PortalActionObservation) {
+    super(observation.outcome);
   }
 }
 

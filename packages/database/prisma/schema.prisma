@@ -199,6 +199,7 @@ model PortalSession {
   errorCode    String?
   errorMessage String?
   workspace    Workspace           @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  actionObservations PortalActionObservation[]
   createdAt    DateTime            @default(now())
   updatedAt    DateTime            @updatedAt
 
@@ -311,10 +312,47 @@ model InvoiceRequestAttempt {
   errorCode        String?
   errorMessage     String?
   invoiceRequest   InvoiceRequest              @relation(fields: [invoiceRequestId], references: [id], onDelete: Restrict)
+  actionObservations PortalActionObservation[]
   createdAt        DateTime                    @default(now())
 
   @@unique([invoiceRequestId, attemptNumber])
   @@index([invoiceRequestId, status])
+}
+
+model PortalActionObservation {
+  id                      String                @id @default(uuid()) @db.Uuid
+  portalSessionId         String                @db.Uuid
+  invoiceRequestAttemptId String?               @db.Uuid
+  stageKey                String
+  actionKey               String
+  outcome                 String
+  startedAt               DateTime
+  finishedAt              DateTime
+  requestObserved         Boolean               @default(false)
+  requestMethod           String?
+  requestUrl              String?
+  responseStatus          Int?
+  requestDurationMs       Int?
+  requestStructure        Json?
+  responseContentType     String?
+  responseSummary         Json?
+  redirects               Json?
+  networkErrors           Json?
+  javascriptErrors        Json?
+  consoleMessages         Json?
+  beforeSnapshot          Json
+  afterSnapshot           Json
+  resolvedSnapshot        Json
+  beforeScreenshot        Bytes?
+  afterScreenshot         Bytes?
+  resolvedScreenshot      Bytes?
+  screenshotMimeType      String?               @db.VarChar(64)
+  portalSession           PortalSession         @relation(fields: [portalSessionId], references: [id], onDelete: Restrict)
+  invoiceRequestAttempt   InvoiceRequestAttempt? @relation(fields: [invoiceRequestAttemptId], references: [id], onDelete: Restrict)
+  createdAt               DateTime               @default(now())
+
+  @@index([portalSessionId, createdAt])
+  @@index([invoiceRequestAttemptId, createdAt])
 }
 
 model InvoiceDocument {

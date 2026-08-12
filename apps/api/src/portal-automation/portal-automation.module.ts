@@ -9,6 +9,7 @@ import { PortalFlowService } from './portal-flow.service';
 import { PortalStageFlowEngine } from './portal-stage-flow';
 import { PortalAdapterRegistry } from './portal-adapter.registry';
 import { PortalSessionService } from './portal-session.service';
+import { PortalActionObservationService } from './portal-action-observation.service';
 
 @Module({
   imports: [ConfigModule],
@@ -19,6 +20,7 @@ import { PortalSessionService } from './portal-session.service';
     { provide: BROWSER_PROVIDER, useExisting: PlaywrightBrowserProvider },
     CostcoInvoiceReadOnlyAdapter,
     PortalSessionService,
+    PortalActionObservationService,
     PortalProbeService,
     PortalFlowService,
     PortalStageFlowEngine,
