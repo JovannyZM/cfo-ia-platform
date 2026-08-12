@@ -136,6 +136,7 @@ describe('ExpenseAssistantWorker', () => {
     const tx = {
       expense: { create: vi.fn().mockResolvedValue(createdExpense) },
       auditEvent: { create: vi.fn().mockResolvedValue({}) },
+      temporaryEvidenceObject: { updateMany: vi.fn().mockResolvedValue({ count: 1 }) },
     };
     const upsert = vi.fn();
     const prisma = {
@@ -207,6 +208,7 @@ describe('ExpenseAssistantWorker', () => {
         sourceConversationId: '42',
       }) },
       auditEvent: { create: vi.fn().mockResolvedValue({}) },
+      temporaryEvidenceObject: { updateMany: vi.fn().mockResolvedValue({ count: 1 }) },
     };
     const prisma = {
       expense: { findUnique: vi.fn().mockResolvedValue(null) },
@@ -271,6 +273,7 @@ describe('ExpenseAssistantWorker', () => {
         sourceConversationId: '42',
       }) },
       auditEvent: { create: vi.fn().mockResolvedValue({}) },
+      temporaryEvidenceObject: { updateMany: vi.fn().mockResolvedValue({ count: 1 }) },
     };
     const prisma = {
       expense: { findUnique: vi.fn().mockResolvedValue(null) },

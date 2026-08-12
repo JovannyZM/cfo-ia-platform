@@ -231,6 +231,9 @@ export class ExpenseAssistantWorker implements Worker {
             metadata: { sourceEventId: event.eventId, workspaceId: workspace.id },
           },
         });
+        await tx.temporaryEvidenceObject.updateMany({
+          where: { sourceEventId: event.eventId }, data: { expenseId: created.id },
+        });
         return created;
       });
       return [this.toRegisteredEvent(
