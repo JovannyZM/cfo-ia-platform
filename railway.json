@@ -5,7 +5,7 @@
     "buildCommand": "pnpm install --frozen-lockfile && pnpm db:generate && pnpm turbo run build --filter=@cfo-ia/api..."
   },
   "deploy": {
-    "preDeployCommand": "pnpm db:deploy && pnpm --filter @cfo-ia/api invoice:retry 614d8304-4ab6-4b39-b11f-c62829fd9d7c",
+    "preDeployCommand": "pnpm db:deploy",
     "startCommand": "pnpm --filter @cfo-ia/api start",
     "healthcheckPath": "/health",
     "healthcheckTimeout": 300,
