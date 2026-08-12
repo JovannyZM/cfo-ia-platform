@@ -36,7 +36,7 @@ export class InvoiceAutomationWorker implements Worker {
 
   async execute(event: DomainEvent): Promise<readonly DomainEvent[]> {
     const payload = event.payload as ExpenseRegisteredPayload;
-    if (!payload.documentNumber || !payload.requestedByUserId) return [];
+    if ((!payload.documentNumber && !payload.documentIdentifiers?.length) || !payload.requestedByUserId) return [];
 
     const profiles = await this.prisma.merchantInvoiceProfile.findMany({ where: { active: true } });
     const merchant = uniqueMerchantMatch(payload.merchantName, profiles);
@@ -59,6 +59,16 @@ export class InvoiceAutomationWorker implements Worker {
     });
     if (taxProfiles.length !== 1) return [];
     const taxProfile = taxProfiles[0]!;
+    const portalContext: AutomatedInvoicePortalContext = {
+      documentNumber: payload.documentNumber ?? '',
+      ...(payload.documentIdentifiers ? { documentIdentifiers: payload.documentIdentifiers } : {}),
+      totalAmount: payload.originalAmount,
+      taxProfile,
+    };
+    const resolvedDocumentNumber = adapter.resolveDocumentNumber(portalContext);
+    if (!resolvedDocumentNumber) return [];
+    const validatedContext = { ...portalContext, documentNumber: resolvedDocumentNumber };
+    adapter.validatePreflight(validatedContext);
 
     const request = await this.requests.create({
       workspaceId: event.workspaceId,
@@ -68,16 +78,13 @@ export class InvoiceAutomationWorker implements Worker {
       channel: payload.sourceChannel ?? 'INTERNAL',
       taxProfileId: taxProfile.id,
       requestedByUserId: payload.requestedByUserId,
+      documentNumber: resolvedDocumentNumber,
     });
     if (request.status !== InvoiceRequestStatus.READY) return [];
 
     const started = await this.requests.tryStart(event.workspaceId, request.id, adapter.adapterKey);
     if (!started) return [];
-    await this.runStartedRequest(event.workspaceId, request.id, started.attempt.id, adapter, {
-      documentNumber: payload.documentNumber,
-      totalAmount: payload.originalAmount,
-      taxProfile,
-    });
+    await this.runStartedRequest(event.workspaceId, request.id, started.attempt.id, adapter, validatedContext);
     return [];
   }
 
@@ -91,15 +98,23 @@ export class InvoiceAutomationWorker implements Worker {
     }
     const adapter = this.adapters.findByMerchantKey(request.merchantKey);
     if (!adapter) return 'NOT_RETRYABLE';
-    const documentNumber = await this.findOriginalDocumentNumber(request.workspaceId, request.expense);
-    if (!documentNumber) throw new Error('INVOICE_RETRY_DOCUMENT_NUMBER_UNAVAILABLE');
-    const started = await this.requests.tryRetryStart(request.workspaceId, request.id, adapter.adapterKey);
-    if (!started) return 'NOT_RETRYABLE';
-    await this.runStartedRequest(request.workspaceId, request.id, started.attempt.id, adapter, {
-      documentNumber,
+    const identifiers = parseDocumentIdentifiers(request.expense.documentIdentifiers);
+    const legacyNumber = request.documentNumber ??
+      await this.findOriginalDocumentNumber(request.workspaceId, request.expense);
+    if (!legacyNumber) throw new Error('INVOICE_RETRY_DOCUMENT_NUMBER_UNAVAILABLE');
+    const portalContext: AutomatedInvoicePortalContext = {
+      documentNumber: legacyNumber,
+      ...(identifiers.length ? { documentIdentifiers: identifiers } : {}),
       totalAmount: request.expense.originalAmount.toString(),
       taxProfile: request.taxProfile,
-    });
+    };
+    const documentNumber = adapter.resolveDocumentNumber(portalContext);
+    if (!documentNumber) throw new Error('INVOICE_RETRY_DOCUMENT_NUMBER_INVALID');
+    const validatedContext = { ...portalContext, documentNumber };
+    adapter.validatePreflight(validatedContext);
+    const started = await this.requests.tryRetryStart(request.workspaceId, request.id, adapter.adapterKey);
+    if (!started) return 'NOT_RETRYABLE';
+    await this.runStartedRequest(request.workspaceId, request.id, started.attempt.id, adapter, validatedContext);
     return 'STARTED';
   }
 
@@ -162,6 +177,16 @@ export class InvoiceAutomationWorker implements Worker {
       );
     }
   }
+}
+
+function parseDocumentIdentifiers(value: unknown): NonNullable<AutomatedInvoicePortalContext['documentIdentifiers']> {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((entry: unknown) => {
+    if (!entry || typeof entry !== 'object') return [];
+    const record = entry as Record<string, unknown>;
+    if (typeof record.type !== 'string' || typeof record.value !== 'string') return [];
+    return [{ type: record.type, value: record.value } as NonNullable<AutomatedInvoicePortalContext['documentIdentifiers']>[number]];
+  });
 }
 
 type MerchantProfile = { merchantKey: string; displayName: string };

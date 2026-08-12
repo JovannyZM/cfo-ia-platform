@@ -18,6 +18,7 @@ export class FakeExpenseEvidenceInterpreter implements ExpenseEvidenceInterprete
     paymentLast4: '1234',
     spenderName: 'Test User',
     documentNumber: null,
+    documentIdentifiers: [],
     confidence: 0.95,
     warnings: [],
   };

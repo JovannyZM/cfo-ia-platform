@@ -3,6 +3,7 @@ import { z } from 'zod';
 export const createInvoiceRequestSchema = z.object({
   expenseId: z.string().uuid().optional(),
   sourceEvidenceId: z.string().uuid().optional(),
+  documentNumber: z.string().trim().min(1).optional(),
   merchantName: z.string().trim().min(1).max(200),
   merchantKey: z.string().trim().min(1).max(80),
   channel: z.string().trim().min(1).max(40),

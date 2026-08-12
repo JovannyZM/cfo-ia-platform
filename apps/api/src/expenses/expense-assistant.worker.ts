@@ -205,6 +205,9 @@ export class ExpenseAssistantWorker implements Worker {
             sourceChannel: payload.sourceChannel ?? null,
             sourceConversationId: payload.sourceConversationId ?? null,
             evidenceSha256: payload.evidenceSha256 ?? null,
+            ...(payload.documentIdentifiers
+              ? { documentIdentifiers: payload.documentIdentifiers }
+              : {}),
             merchantName: payload.merchantName,
             description: payload.description ?? null,
             occurredAt: new Date(payload.occurredAt),
@@ -237,6 +240,7 @@ export class ExpenseAssistantWorker implements Worker {
           ...(payload.explicitBudgetName ? { explicitBudgetName: payload.explicitBudgetName } : {}),
           ...(learnedInstrument?.name ? { paymentInstrumentName: learnedInstrument.name } : {}),
           ...(payload.documentNumber ? { documentNumber: payload.documentNumber } : {}),
+          ...(payload.documentIdentifiers ? { documentIdentifiers: payload.documentIdentifiers } : {}),
           ...(payload.requestedByUserId ? { requestedByUserId: payload.requestedByUserId } : {}),
         },
       )];
@@ -279,6 +283,12 @@ export class ExpenseAssistantWorker implements Worker {
       explicitBudgetName?: string;
       paymentInstrumentName?: string;
       documentNumber?: string;
+      documentIdentifiers?: {
+        type: 'TICKET_NUMBER' | 'ORDER_NUMBER' | 'BARCODE' | 'TRANSACTION_NUMBER'
+          | 'AUTHORIZATION_NUMBER' | 'REFERENCE_NUMBER' | 'STORE_NUMBER'
+          | 'REGISTER_NUMBER' | 'OTHER';
+        value: string;
+      }[];
       requestedByUserId?: string;
     } = {},
   ): DomainEvent<ExpenseRegisteredPayload> {
@@ -306,6 +316,7 @@ export class ExpenseAssistantWorker implements Worker {
         ...(expense.sourceConversationId ? { sourceConversationId: expense.sourceConversationId } : {}),
         ...(options.explicitBudgetName ? { explicitBudgetName: options.explicitBudgetName } : {}),
         ...(options.documentNumber ? { documentNumber: options.documentNumber } : {}),
+        ...(options.documentIdentifiers ? { documentIdentifiers: options.documentIdentifiers } : {}),
         ...(options.requestedByUserId ? { requestedByUserId: options.requestedByUserId } : {}),
       },
     };

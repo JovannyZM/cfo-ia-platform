@@ -3,6 +3,10 @@ import type { StagedPortalAdapter } from './portal-stage-flow';
 
 export type AutomatedInvoicePortalContext = {
   documentNumber: string;
+  documentIdentifiers?: readonly {
+    type: 'TICKET_NUMBER' | 'ORDER_NUMBER' | 'BARCODE' | 'TRANSACTION_NUMBER' | 'AUTHORIZATION_NUMBER' | 'REFERENCE_NUMBER' | 'STORE_NUMBER' | 'REGISTER_NUMBER' | 'OTHER';
+    value: string;
+  }[];
   totalAmount: string;
   taxProfile: {
     status: string;
@@ -19,6 +23,8 @@ export type AutomatedInvoicePortalContext = {
 export interface AutomatedInvoicePortalAdapter extends StagedPortalAdapter<string> {
   readonly merchantKeys: readonly string[];
   buildInvoiceFlowInput(context: AutomatedInvoicePortalContext): Readonly<Record<string, string>>;
+  resolveDocumentNumber(context: AutomatedInvoicePortalContext): string | undefined;
+  validatePreflight(context: AutomatedInvoicePortalContext): void;
 }
 
 @Injectable()

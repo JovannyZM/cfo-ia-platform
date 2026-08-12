@@ -171,7 +171,31 @@ export class CostcoInvoiceReadOnlyAdapter implements PortalActionAdapter<'CONTIN
   }
 
   buildInvoiceFlowInput(context: AutomatedInvoicePortalContext): Readonly<Record<string, string>> {
+    const documentNumber = this.resolveDocumentNumber(context);
+    const validated = { ...context, ...(documentNumber ? { documentNumber } : {}) };
+    this.validatePreflight(validated);
     return this.buildFlowInput(
+      { ticketOrOrder: documentNumber!, totalPaid: context.totalAmount, rfc: context.taxProfile.rfc },
+      context.taxProfile,
+    );
+  }
+
+  resolveDocumentNumber(context: AutomatedInvoicePortalContext): string | undefined {
+    const barcode = context.documentIdentifiers?.find((identifier) =>
+      identifier.type === 'BARCODE' && /^\d{20}$/u.test(identifier.value.trim()));
+    if (barcode) return barcode.value.trim();
+    const fallback = context.documentNumber.trim();
+    return /^\d{20}$/u.test(fallback) ? fallback : undefined;
+  }
+
+  validatePreflight(context: AutomatedInvoicePortalContext): void {
+    if (!/^\d{20}$/u.test(context.documentNumber)) {
+      throw new CostcoPreflightError('COSTCO_COMPROBANTE_INVALID');
+    }
+    if (!/^\d+(?:\.\d+)?$/u.test(context.totalAmount) || Number(context.totalAmount) <= 0) {
+      throw new CostcoPreflightError('COSTCO_AMOUNT_INVALID');
+    }
+    this.buildFlowInput(
       { ticketOrOrder: context.documentNumber, totalPaid: context.totalAmount, rfc: context.taxProfile.rfc },
       context.taxProfile,
     );
@@ -273,4 +297,8 @@ export class CostcoInvoiceReadOnlyAdapter implements PortalActionAdapter<'CONTIN
       actionResolution,
     };
   }
+}
+
+export class CostcoPreflightError extends Error {
+  readonly code = 'COSTCO_PREFLIGHT_FAILED';
 }

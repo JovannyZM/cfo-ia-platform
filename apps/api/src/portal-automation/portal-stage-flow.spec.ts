@@ -119,6 +119,42 @@ describe('PortalStageFlowEngine', () => {
 });
 
 describe('Costco staged adapter', () => {
+  const completeProfile = {
+    status: 'ACTIVE', approvedAt: new Date(), rfc: 'BELE880510NG3', legalName: 'ESLI MAYTANE BENITEZ LANDA',
+    postalCode: '91045', taxRegime: '626 - Regime', cfdiUse: 'G03 - General', billingEmail: 'billing@example.com',
+  } as const;
+
+  it('selects only a 20 digit BARCODE as Costco comprobante', () => {
+    const costco = new CostcoInvoiceReadOnlyAdapter();
+    const context = {
+      documentNumber: '2518', totalAmount: '1383.26', taxProfile: completeProfile,
+      documentIdentifiers: [
+        { type: 'TICKET_NUMBER' as const, value: '2518' },
+        { type: 'AUTHORIZATION_NUMBER' as const, value: '842777' },
+        { type: 'BARCODE' as const, value: '71901102120708261246' },
+      ],
+    };
+    expect(costco.resolveDocumentNumber(context)).toBe('71901102120708261246');
+  });
+
+  it('rejects ticket numbers, authorization numbers and card last4 as Costco comprobante', () => {
+    const costco = new CostcoInvoiceReadOnlyAdapter();
+    const context = { documentNumber: '0633', totalAmount: '1383.26', taxProfile: completeProfile };
+    expect(costco.resolveDocumentNumber(context)).toBeUndefined();
+    expect(() => costco.validatePreflight(context)).toThrowError(/COSTCO_COMPROBANTE_INVALID/);
+  });
+
+  it('accepts a complete Costco preflight and maps all stage-two fiscal fields', () => {
+    const costco = new CostcoInvoiceReadOnlyAdapter();
+    const context = { documentNumber: '71901102120708261246', totalAmount: '1383.26', taxProfile: completeProfile };
+    expect(() => costco.validatePreflight(context)).not.toThrow();
+    expect(costco.buildInvoiceFlowInput(context)).toEqual({
+      ticketOrOrder: '71901102120708261246', totalPaid: '1383.26', rfc: 'BELE880510NG3',
+      legalName: 'ESLI MAYTANE BENITEZ LANDA', postalCode: '91045', taxRegime: '626', cfdiUse: 'G03',
+      billingEmail: 'billing@example.com', billingEmailConfirmation: 'billing@example.com',
+    });
+  });
+
   it('declares purchase identification and fiscal-data stages', () => {
     const stages = new CostcoInvoiceReadOnlyAdapter().getStages();
     expect(stages.map((entry) => entry.key)).toEqual(['IDENTIFY_PURCHASE', 'TAX_DATA']);

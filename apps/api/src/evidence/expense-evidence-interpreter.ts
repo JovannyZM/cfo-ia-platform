@@ -18,6 +18,13 @@ export const expenseInterpretationResultSchema = z.object({
   paymentLast4: z.string().regex(/^\d{4}$/).nullable(),
   spenderName: z.string().min(1).nullable(),
   documentNumber: z.string().min(1).nullable(),
+  documentIdentifiers: z.array(z.object({
+    type: z.enum([
+      'TICKET_NUMBER', 'ORDER_NUMBER', 'BARCODE', 'TRANSACTION_NUMBER',
+      'AUTHORIZATION_NUMBER', 'REFERENCE_NUMBER', 'STORE_NUMBER', 'REGISTER_NUMBER', 'OTHER',
+    ]),
+    value: z.string().min(1),
+  })).default([]),
   confidence: z.number().min(0).max(1),
   warnings: z.array(z.string()),
 });

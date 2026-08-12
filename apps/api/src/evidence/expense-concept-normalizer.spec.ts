@@ -55,6 +55,37 @@ describe('ExpenseInterpreterWorker ticket fields', () => {
     expect(result?.payload).not.toHaveProperty('paymentLast4');
   });
 
+  it('preserves barcode, ticket and authorization as separate identifiers', async () => {
+    const fake = new FakeExpenseEvidenceInterpreter();
+    fake.result = {
+      ...fake.result,
+      documentNumber: '2518',
+      paymentLast4: '0633',
+      documentIdentifiers: [
+        { type: 'TICKET_NUMBER', value: '2518' },
+        { type: 'BARCODE', value: '71901102120708261246' },
+        { type: 'AUTHORIZATION_NUMBER', value: '842777' },
+      ],
+    };
+    const worker = new ExpenseInterpreterWorker(fake, new WorkerRegistry());
+    const [result] = await worker.execute({
+      eventId: '10000000-0000-4000-8000-000000000001',
+      type: EXPENSE_EVIDENCE_RECEIVED,
+      workspaceId: '10000000-0000-4000-8000-000000000002',
+      createdAt: new Date(),
+      payload: { image: Uint8Array.from([1]), mimeType: 'image/jpeg' },
+    });
+    expect(result?.payload).toMatchObject({
+      documentNumber: '2518',
+      paymentLast4: '0633',
+      documentIdentifiers: [
+        { type: 'TICKET_NUMBER', value: '2518' },
+        { type: 'BARCODE', value: '71901102120708261246' },
+        { type: 'AUTHORIZATION_NUMBER', value: '842777' },
+      ],
+    });
+  });
+
   it('rejects a document that contains no recognizable expense evidence', async () => {
     const fake = new FakeExpenseEvidenceInterpreter();
     fake.result = {
@@ -62,7 +93,7 @@ describe('ExpenseInterpreterWorker ticket fields', () => {
       merchantRfc: null,
       originalCurrency: null, category: null, paymentMethod: null,
       paymentInstrumentType: null, paymentLast4: null, spenderName: null,
-      documentNumber: null, confidence: 0.2, warnings: [],
+      documentNumber: null, documentIdentifiers: [], confidence: 0.2, warnings: [],
     };
     const worker = new ExpenseInterpreterWorker(fake, new WorkerRegistry());
     const [result] = await worker.execute({

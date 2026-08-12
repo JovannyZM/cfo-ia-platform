@@ -6,6 +6,16 @@ export const EXPENSE_EVIDENCE_RECEIVED = 'ExpenseEvidenceReceived' as const;
 export const EXPENSE_EVIDENCE_INTERPRETATION_FAILED =
   'ExpenseEvidenceInterpretationFailed' as const;
 
+export type ExpenseDocumentIdentifierType =
+  | 'TICKET_NUMBER' | 'ORDER_NUMBER' | 'BARCODE' | 'TRANSACTION_NUMBER'
+  | 'AUTHORIZATION_NUMBER' | 'REFERENCE_NUMBER' | 'STORE_NUMBER'
+  | 'REGISTER_NUMBER' | 'OTHER';
+
+export interface ExpenseDocumentIdentifier extends Readonly<Record<string, string>> {
+  readonly type: ExpenseDocumentIdentifierType;
+  readonly value: string;
+}
+
 export interface ExpenseEvidenceInterpretedPayload {
   readonly merchantName: string;
   readonly description?: string;
@@ -26,6 +36,7 @@ export interface ExpenseEvidenceInterpretedPayload {
   readonly evidenceSha256?: string;
   readonly explicitBudgetName?: string;
   readonly documentNumber?: string;
+  readonly documentIdentifiers?: ExpenseDocumentIdentifier[];
   readonly requestedByUserId?: string;
 }
 
@@ -66,6 +77,7 @@ export interface ExpenseRegisteredPayload {
   readonly sourceConversationId?: string;
   readonly explicitBudgetName?: string;
   readonly documentNumber?: string;
+  readonly documentIdentifiers?: ExpenseDocumentIdentifier[];
   readonly requestedByUserId?: string;
 }
 

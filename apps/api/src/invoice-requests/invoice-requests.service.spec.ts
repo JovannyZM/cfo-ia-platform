@@ -38,7 +38,10 @@ function harness(options: {
   const prisma: any = {
     workspace: { findUnique: vi.fn().mockResolvedValue({ accountId: 'account-id' }) },
     merchantInvoiceProfile: { findFirst: vi.fn().mockResolvedValue(options.merchant === false ? null : { merchantKey: 'COSTCO', active: true }) },
-    expense: { findFirst: vi.fn().mockResolvedValue({ id: ids.expense }) },
+    expense: {
+      findFirst: vi.fn().mockResolvedValue({ id: ids.expense }),
+      update: vi.fn(({ data }: any) => Promise.resolve({ id: ids.expense, ...data })),
+    },
     taxProfile: { findFirst: vi.fn().mockResolvedValue(options.taxStatus === null ? null : {
       id: ids.tax, status: options.taxStatus ?? TaxProfileStatus.ACTIVE,
       approvedAt: new Date(), postalCode: '91000', taxRegime: '601', cfdiUse: 'G03', billingEmail: 'billing@example.com',
@@ -69,6 +72,9 @@ function harness(options: {
       }),
     },
     invoiceDocument: { create: vi.fn(({ data }: any) => { documents.push(data); return Promise.resolve(data); }) },
+    supplementalExpenseEvidence: {
+      upsert: vi.fn(({ create }: any) => Promise.resolve({ id: 'supplemental-evidence', ...create })),
+    },
     auditEvent: { create: vi.fn(({ data }: any) => { audits.push(data); return Promise.resolve(data); }) },
     $transaction: vi.fn((callback: (tx: unknown) => unknown) => callback(prisma)),
   };
@@ -109,6 +115,37 @@ describe('InvoiceRequestsService', () => {
     const { service, prisma } = harness({ existing });
     expect(await service.create(input())).toBe(existing);
     expect(prisma.invoiceRequest.create).not.toHaveBeenCalled();
+  });
+
+  it('attaches supplemental evidence, repairs identifiers and preserves previous attempts', async () => {
+    const h = harness({ requestStatus: InvoiceRequestStatus.FAILED });
+    h.prisma.invoiceRequest.findFirst.mockResolvedValueOnce({
+      id: ids.request, workspaceId: ids.workspace, requestedByUserId: ids.user,
+      status: InvoiceRequestStatus.FAILED, documentNumber: '2518',
+      workspace: { accountId: 'account-id' }, attempts: [{ id: 'a1' }, { id: 'a2' }, { id: 'a3' }, { id: 'a4' }],
+      expense: {
+        id: ids.expense, merchantName: 'Costco', originalAmount: '1383.26',
+        occurredAt: new Date('2026-08-07T13:37:00.000Z'), paymentLast4: '0633', evidenceSha256: 'a'.repeat(64),
+      },
+    });
+    const result = await h.service.attachSupplementalEvidence({
+      workspaceId: ids.workspace, invoiceRequestId: ids.request, providedByUserId: ids.user,
+      sha256: 'b'.repeat(64), merchantName: 'Costco de México, S.A. de C.V.', originalAmount: '1383.26',
+      occurredAt: '2026-08-07T19:37:00.000Z', paymentLast4: '0633', documentNumber: '71901102520807261337',
+      documentIdentifiers: [
+        { type: 'TICKET_NUMBER', value: '2518' },
+        { type: 'AUTHORIZATION_NUMBER', value: '744265' },
+        { type: 'BARCODE', value: '71901102520807261337' },
+      ],
+    });
+    expect(result).toMatchObject({ attemptsPreserved: 4, request: { documentNumber: '71901102520807261337' } });
+    expect(h.prisma.expense.update).toHaveBeenCalledWith(expect.objectContaining({
+      data: { documentIdentifiers: expect.arrayContaining([{ type: 'BARCODE', value: '71901102520807261337' }]) },
+    }));
+    expect(h.audits[0]).toMatchObject({
+      action: INVOICE_AUDIT_ACTIONS.SUPPLEMENTAL_EVIDENCE_ATTACHED,
+      metadata: expect.objectContaining({ originalEvidenceSha256Preserved: 'a'.repeat(64), attemptsPreserved: 4 }),
+    });
   });
 
   it('registers and audits an attempt', async () => {

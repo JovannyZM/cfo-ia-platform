@@ -25,6 +25,10 @@ export const expenseEvidenceInterpretedSchema = z.object({
   evidenceSha256: z.string().regex(/^[a-f0-9]{64}$/).optional(),
   explicitBudgetName: z.string().trim().min(1).optional(),
   documentNumber: z.string().trim().min(1).optional(),
+  documentIdentifiers: z.array(z.object({
+    type: z.enum(['TICKET_NUMBER', 'ORDER_NUMBER', 'BARCODE', 'TRANSACTION_NUMBER', 'AUTHORIZATION_NUMBER', 'REFERENCE_NUMBER', 'STORE_NUMBER', 'REGISTER_NUMBER', 'OTHER']),
+    value: z.string().trim().min(1),
+  })).optional(),
   requestedByUserId: z.string().uuid().optional(),
 });
 

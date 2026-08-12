@@ -179,6 +179,7 @@ model Workspace {
   budgetNotificationStates BudgetNotificationState[]
   dailyCloseDeliveries     DailyCloseDelivery[]
   invoiceRequests          InvoiceRequest[]
+  supplementalExpenseEvidence SupplementalExpenseEvidence[]
   portalSessions           PortalSession[]
   taxProfiles              TaxProfile[]
   createdAt                DateTime                  @default(now())
@@ -284,12 +285,14 @@ model InvoiceRequest {
   taxProfileId      String?                 @db.Uuid
   requestedByUserId String                  @db.Uuid
   failureReason     String?
+  documentNumber    String?
   workspace         Workspace               @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
   expense           Expense?                @relation(fields: [expenseId], references: [id], onDelete: Restrict)
   taxProfile        TaxProfile?             @relation(fields: [taxProfileId], references: [id], onDelete: Restrict)
   requestedBy       User                    @relation(fields: [requestedByUserId], references: [id], onDelete: Restrict)
   attempts          InvoiceRequestAttempt[]
   documents         InvoiceDocument[]
+  supplementalEvidence SupplementalExpenseEvidence[]
   createdAt         DateTime                @default(now())
   updatedAt         DateTime                @updatedAt
   completedAt       DateTime?
@@ -431,6 +434,7 @@ model Expense {
   sourceChannel        String?
   sourceConversationId String?
   evidenceSha256       String?                  @db.Char(64)
+  documentIdentifiers  Json?
   merchantName         String
   description          String?
   occurredAt           DateTime
@@ -452,6 +456,7 @@ model Expense {
   workspace            Workspace                @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
   budgetAssignment     ExpenseBudgetAssignment?
   invoiceRequests      InvoiceRequest[]
+  supplementalEvidence SupplementalExpenseEvidence[]
   createdAt            DateTime                 @default(now())
   updatedAt            DateTime                 @updatedAt
 
@@ -461,6 +466,29 @@ model Expense {
   @@index([workspaceId, sourceChannel, sourceConversationId, createdAt])
   @@index([paymentInstrumentId])
   @@index([cancelledByUserId])
+}
+
+model SupplementalExpenseEvidence {
+  id               String         @id @default(uuid()) @db.Uuid
+  workspaceId      String         @db.Uuid
+  expenseId        String         @db.Uuid
+  invoiceRequestId String         @db.Uuid
+  sha256           String         @db.Char(64)
+  source           String
+  identifiers      Json
+  extractedAmount  Decimal        @db.Decimal(19, 4)
+  extractedDate    DateTime
+  extractedMerchant String
+  providedByUserId String         @db.Uuid
+  workspace        Workspace      @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  expense          Expense        @relation(fields: [expenseId], references: [id], onDelete: Restrict)
+  invoiceRequest   InvoiceRequest @relation(fields: [invoiceRequestId], references: [id], onDelete: Restrict)
+  providedBy       User           @relation(fields: [providedByUserId], references: [id], onDelete: Restrict)
+  createdAt        DateTime       @default(now())
+
+  @@unique([invoiceRequestId, sha256])
+  @@index([workspaceId, expenseId])
+  @@index([sha256])
 }
 
 model PaymentInstrument {
@@ -533,6 +561,7 @@ model User {
   conversationSessions       ConversationSession[]
   requestedInvoices          InvoiceRequest[]
   approvedTaxProfiles        TaxProfile[]           @relation("TaxProfileApprover")
+  supplementalExpenseEvidence SupplementalExpenseEvidence[]
   createdAt                  DateTime               @default(now())
   updatedAt                  DateTime               @updatedAt
   deletedAt                  DateTime?

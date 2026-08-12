@@ -21,7 +21,21 @@ export const INVOICE_AUDIT_ACTIONS = {
   COMPLETED: 'INVOICE_REQUEST_COMPLETED',
   FAILED: 'INVOICE_REQUEST_FAILED',
   CANCELLED: 'INVOICE_REQUEST_CANCELLED',
+  SUPPLEMENTAL_EVIDENCE_ATTACHED: 'INVOICE_REQUEST_SUPPLEMENTAL_EVIDENCE_ATTACHED',
 } as const;
+
+export type SupplementalInvoiceEvidenceInput = {
+  workspaceId: string;
+  invoiceRequestId: string;
+  providedByUserId: string;
+  sha256: string;
+  merchantName: string;
+  originalAmount: string;
+  occurredAt: string;
+  paymentLast4?: string;
+  documentNumber: string;
+  documentIdentifiers: { type: string; value: string }[];
+};
 
 @Injectable()
 export class InvoiceRequestsService {
@@ -42,6 +56,73 @@ export class InvoiceRequestsService {
     });
     if (!request) throw new NotFoundException('Invoice request not found');
     return request;
+  }
+
+  async attachSupplementalEvidence(input: SupplementalInvoiceEvidenceInput) {
+    if (!/^[a-f0-9]{64}$/u.test(input.sha256)) throw new BadRequestException('Invalid supplemental evidence hash');
+    const barcode = input.documentIdentifiers.find(({ type, value }) =>
+      type === 'BARCODE' && value === input.documentNumber && /^\d{20}$/u.test(value));
+    if (!barcode) throw new BadRequestException('A verified 20 digit BARCODE is required');
+    const request = await this.prisma.invoiceRequest.findFirst({
+      where: { id: input.invoiceRequestId, workspaceId: input.workspaceId },
+      include: { expense: true, workspace: { select: { accountId: true } }, attempts: { select: { id: true } } },
+    });
+    if (!request?.expense) throw new NotFoundException('Invoice request or Expense not found');
+    const expense = request.expense;
+    const merchantMatches = normalizeEvidenceText(expense.merchantName).includes(normalizeEvidenceText(input.merchantName))
+      || normalizeEvidenceText(input.merchantName).includes(normalizeEvidenceText(expense.merchantName));
+    const amountMatches = new Prisma.Decimal(input.originalAmount).equals(expense.originalAmount);
+    const dateMatches = new Date(input.occurredAt).toISOString().slice(0, 10) === expense.occurredAt.toISOString().slice(0, 10);
+    const cardMatches = !input.paymentLast4 || !expense.paymentLast4 || input.paymentLast4 === expense.paymentLast4;
+    if (!merchantMatches || !amountMatches || !dateMatches || !cardMatches) {
+      throw new BadRequestException('Supplemental evidence contradicts the existing Expense');
+    }
+    return this.prisma.$transaction(async (tx) => {
+      const evidence = await tx.supplementalExpenseEvidence.upsert({
+        where: { invoiceRequestId_sha256: { invoiceRequestId: request.id, sha256: input.sha256 } },
+        create: {
+          workspaceId: input.workspaceId,
+          expenseId: expense.id,
+          invoiceRequestId: request.id,
+          sha256: input.sha256,
+          source: 'USER_PROVIDED_AFTER_REGISTRATION',
+          identifiers: input.documentIdentifiers,
+          extractedAmount: new Prisma.Decimal(input.originalAmount),
+          extractedDate: new Date(input.occurredAt),
+          extractedMerchant: input.merchantName,
+          providedByUserId: input.providedByUserId,
+        },
+        update: {},
+      });
+      await tx.expense.update({
+        where: { id: expense.id },
+        data: { documentIdentifiers: input.documentIdentifiers },
+      });
+      const updated = await tx.invoiceRequest.update({
+        where: { id: request.id },
+        data: { documentNumber: input.documentNumber },
+      });
+      await tx.auditEvent.create({
+        data: {
+          accountId: request.workspace.accountId,
+          actorUserId: input.providedByUserId,
+          action: INVOICE_AUDIT_ACTIONS.SUPPLEMENTAL_EVIDENCE_ATTACHED,
+          entityType: 'InvoiceRequest',
+          entityId: request.id,
+          metadata: {
+            supplementalEvidenceId: evidence.id,
+            supplementalSha256: input.sha256,
+            originalEvidenceSha256Preserved: expense.evidenceSha256,
+            previousDocumentNumber: request.documentNumber,
+            newDocumentNumber: input.documentNumber,
+            identifiers: input.documentIdentifiers,
+            correspondence: { merchantMatches, amountMatches, dateMatches, cardMatches },
+            attemptsPreserved: request.attempts.length,
+          },
+        },
+      });
+      return { request: updated, evidence, attemptsPreserved: request.attempts.length };
+    });
   }
 
   async create(input: CreateInvoiceRequestInput) {
@@ -87,6 +168,7 @@ export class InvoiceRequestsService {
           workspaceId: input.workspaceId,
           ...(parsed.expenseId ? { expenseId: parsed.expenseId } : {}),
           ...(parsed.sourceEvidenceId ? { sourceEvidenceId: parsed.sourceEvidenceId } : {}),
+          ...(parsed.documentNumber ? { documentNumber: parsed.documentNumber } : {}),
           merchantName: parsed.merchantName.trim(), merchantKey, status,
           channel: parsed.channel.trim().toUpperCase(),
           ...(parsed.taxProfileId ? { taxProfileId: parsed.taxProfileId } : {}),
@@ -278,4 +360,8 @@ export class InvoiceRequestsService {
       throw new BadRequestException(`Invalid invoice request transition: ${from} -> ${to}`);
     }
   }
+}
+
+function normalizeEvidenceText(value: string): string {
+  return value.normalize('NFD').replace(/\p{Diacritic}/gu, '').replace(/[^A-Z0-9]/giu, '').toUpperCase();
 }

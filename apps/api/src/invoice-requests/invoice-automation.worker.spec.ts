@@ -61,6 +61,9 @@ function harness(options: { requestStatus?: InvoiceRequestStatus; supported?: bo
     adapterKey: 'CONFIGURED_ADAPTER', merchantKeys: ['COSTCO'], portalUrl: 'https://portal.example',
     allowedDomains: ['portal.example'], getStages: vi.fn().mockReturnValue([]),
     getActionLocator: vi.fn(), resolveOutcome: vi.fn(),
+    resolveDocumentNumber: vi.fn((context: { documentNumber: string; documentIdentifiers?: { type: string; value: string }[] }) =>
+      context.documentIdentifiers?.find((entry) => entry.type === 'BARCODE')?.value ?? context.documentNumber),
+    validatePreflight: vi.fn(),
     buildInvoiceFlowInput: vi.fn().mockReturnValue({ portal: 'input' }),
   };
   const adapters = { findByMerchantKey: vi.fn().mockReturnValue(adapter) } as unknown as PortalAdapterRegistry;
@@ -104,6 +107,33 @@ describe('InvoiceAutomationWorker', () => {
     await h.worker.execute(event({ documentNumber: undefined }));
     await h.worker.execute(event({ requestedByUserId: undefined }));
     expect(h.requests.create).not.toHaveBeenCalled();
+  });
+
+  it('uses a separated barcode identifier instead of card last4 or printed ticket number', async () => {
+    const h = harness();
+    await h.worker.execute(event({
+      documentNumber: '2518',
+      paymentLast4: '0633',
+      documentIdentifiers: [
+        { type: 'TICKET_NUMBER', value: '2518' },
+        { type: 'AUTHORIZATION_NUMBER', value: '842777' },
+        { type: 'BARCODE', value: '71901102120708261246' },
+      ],
+    }));
+    expect(h.requests.create).toHaveBeenCalledWith(expect.objectContaining({
+      documentNumber: '71901102120708261246',
+    }));
+    expect((h.adapter.validatePreflight as ReturnType<typeof vi.fn>).mock.invocationCallOrder[0])
+      .toBeLessThan((h.requests.create as ReturnType<typeof vi.fn>).mock.invocationCallOrder[0]!);
+  });
+
+  it('does not create or consume an attempt when adapter preflight rejects the evidence', async () => {
+    const h = harness();
+    (h.adapter.resolveDocumentNumber as ReturnType<typeof vi.fn>).mockReturnValueOnce(undefined);
+    await h.worker.execute(event({ documentNumber: '2518', paymentLast4: '0633' }));
+    expect(h.requests.create).not.toHaveBeenCalled();
+    expect(h.requests.tryStart).not.toHaveBeenCalled();
+    expect(h.portalFlows.execute).not.toHaveBeenCalled();
   });
 
   it('selects automation through merchant configuration rather than Costco logic in the worker', async () => {

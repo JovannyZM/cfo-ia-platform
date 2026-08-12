@@ -116,6 +116,7 @@ export class ExpenseInterpreterWorker implements Worker {
       ...(source.sourceConversationId ? { sourceConversationId: source.sourceConversationId } : {}),
       ...(source.evidenceSha256 ? { evidenceSha256: source.evidenceSha256 } : {}),
       ...(result.documentNumber ? { documentNumber: result.documentNumber } : {}),
+      ...(result.documentIdentifiers.length ? { documentIdentifiers: result.documentIdentifiers } : {}),
       ...(source.requestedByUserId ? { requestedByUserId: source.requestedByUserId } : {}),
     };
 
