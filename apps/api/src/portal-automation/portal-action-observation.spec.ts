@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { CostcoInvoiceReadOnlyAdapter } from './costco-invoice-read-only.adapter';
-import { classifyActionObservation, sanitizePortalDiagnostic } from './playwright-browser.provider';
+import { assertStageFieldsReady, classifyActionObservation, sanitizePortalDiagnostic } from './playwright-browser.provider';
 
 const base = {
   transitionVisible: false,
@@ -53,5 +53,34 @@ describe('portal post-action observation', () => {
     });
     const source = readFileSync(join(__dirname, 'playwright-browser.provider.ts'), 'utf8');
     expect(source.indexOf("page.on('request', onRequest)")).toBeLessThan(source.indexOf('this.clickAction(session, input.form, input.action)'));
+  });
+
+  it('declares user-like typing only for the masked Costco amount field', () => {
+    const fields = new CostcoInvoiceReadOnlyAdapter().getStages()[0]!.fields;
+    expect(fields.find((field) => field.inputKey === 'totalPaid')?.locator.inputMethod).toBe('press-sequentially');
+    expect(fields.find((field) => field.inputKey === 'ticketOrOrder')?.locator.inputMethod).toBeUndefined();
+    expect(fields.find((field) => field.inputKey === 'rfc')?.locator.inputMethod).toBeUndefined();
+  });
+
+  it('blocks the action when a current-stage control is invalid', () => {
+    expect(() => assertStageFieldsReady([{
+      locator: 'monto', visible: true, valuePresent: true, nativeValid: true,
+      frameworkValid: false, disabled: false, readOnly: false,
+    }])).toThrow(/PORTAL_STAGE_FIELDS_INVALID.*monto/);
+  });
+
+  it('allows the action when every current-stage control is valid', () => {
+    expect(() => assertStageFieldsReady(['ticket', 'monto', 'rfc'].map((locator) => ({
+      locator, visible: true, valuePresent: true, nativeValid: true,
+      frameworkValid: true, disabled: false, readOnly: false,
+    })))).not.toThrow();
+  });
+
+  it('observes click, submit and all relevant network traffic before action execution', () => {
+    const source = readFileSync(join(__dirname, 'playwright-browser.provider.ts'), 'utf8');
+    expect(source).toContain("dom.addEventListener('click', click, true)");
+    expect(source).toContain("dom.addEventListener('submit', submit, true)");
+    expect(source).toContain("['xhr', 'fetch', 'document'].includes(request.resourceType())");
+    expect(source.indexOf('installActionEventProbe(page')).toBeLessThan(source.indexOf('this.clickAction(session, input.form, input.action)'));
   });
 });

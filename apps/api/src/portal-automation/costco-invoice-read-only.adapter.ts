@@ -94,7 +94,7 @@ export class CostcoInvoiceReadOnlyAdapter implements PortalActionAdapter<'CONTIN
         readySelector: this.getReadySelector(),
         fields: [
           { inputKey: 'ticketOrOrder', locator: { name: 'ticket', control: 'text', expectedVisibleCount: 1, events: normalEvents } },
-          { inputKey: 'totalPaid', locator: { name: 'monto', control: 'text', expectedVisibleCount: 1, events: normalEvents } },
+          { inputKey: 'totalPaid', locator: { name: 'monto', control: 'text', expectedVisibleCount: 1, inputMethod: 'press-sequentially', events: ['blur'] } },
           { inputKey: 'rfc', locator: { name: 'rfc', control: 'text', expectedVisibleCount: 1, events: normalEvents } },
         ],
         form: this.getFormLocator(),

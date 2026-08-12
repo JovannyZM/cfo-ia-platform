@@ -23,6 +23,8 @@ import {
   type ObservePortalActionInput,
   type PortalActionObservation,
   type PortalActionSnapshot,
+  type PortalFieldState,
+  type PortalNetworkActivity,
   isAllowedPortalUrl,
 } from './browser-provider';
 
@@ -216,6 +218,9 @@ export class PlaywrightBrowserProvider implements BrowserProvider {
     const field = candidates.nth(visibleIndexes[0]!);
     if (descriptor.control === 'select') {
       await tracePlaywright('locator.selectOption', selector, active.options.timeoutMs, () => field.selectOption(value));
+    } else if (descriptor.inputMethod === 'press-sequentially') {
+      await tracePlaywright('locator.focus', selector, active.options.timeoutMs, () => field.focus());
+      await tracePlaywright('locator.pressSequentially', selector, active.options.timeoutMs, () => field.pressSequentially(value, { delay: 15 }));
     } else {
       await tracePlaywright('locator.fill', selector, active.options.timeoutMs, () => field.fill(value));
     }
@@ -299,6 +304,7 @@ export class PlaywrightBrowserProvider implements BrowserProvider {
     const networkErrors: string[] = [];
     const javascriptErrors: string[] = [];
     const consoleMessages: string[] = [];
+    const networkActivity = new Map<Request, PortalNetworkActivity>();
     let expectedRequest: Request | undefined;
     let expectedResponse: Response | undefined;
     let requestStartedAt: number | undefined;
@@ -309,6 +315,12 @@ export class PlaywrightBrowserProvider implements BrowserProvider {
         && safePathname(rawUrl) === input.expectedRequest.pathname
       : false;
     const onRequest = (request: Request) => {
+      if (['xhr', 'fetch', 'document'].includes(request.resourceType())) {
+        networkActivity.set(request, {
+          method: request.method(), url: sanitizeDiagnosticUrl(request.url()), resourceType: request.resourceType(),
+          requestStructure: summarizeRequestStructure(request),
+        });
+      }
       if (matchesExpected(request.method(), request.url())) {
         expectedRequest = request;
         requestStartedAt = Date.now();
@@ -316,6 +328,10 @@ export class PlaywrightBrowserProvider implements BrowserProvider {
     };
     const onResponse = (response: Response) => {
       const request = response.request();
+      const activity = networkActivity.get(request);
+      if (activity) {
+        activity.status = response.status();
+      }
       if (matchesExpected(request.method(), request.url())) {
         expectedResponse = response;
         responseReceivedAt = Date.now();
@@ -340,7 +356,9 @@ export class PlaywrightBrowserProvider implements BrowserProvider {
     page.on('console', onConsole);
 
     try {
+      await installActionEventProbe(page, input.form, input.action);
       const before = await captureActionSnapshot(page, input);
+      assertStageFieldsReady(before.currentStageFieldStates ?? []);
       const beforeScreenshot = await captureRedactedScreenshot(page);
       const actionResolution = await this.clickAction(session, input.form, input.action);
       const after = await captureActionSnapshot(page, input);
@@ -386,6 +404,10 @@ export class PlaywrightBrowserProvider implements BrowserProvider {
       }) ?? 'TIMEOUT';
 
       const resolved = await captureActionSnapshot(page, input);
+      for (const [request, activity] of networkActivity) {
+        const response = await request.response().catch(() => null);
+        if (response) activity.responseSummary = (await summarizeResponse(response)).responseSummary;
+      }
       const resolvedScreenshot = await captureRedactedScreenshot(page);
       const responseDetails = expectedResponse ? await summarizeResponse(expectedResponse) : {};
       return {
@@ -414,6 +436,7 @@ export class PlaywrightBrowserProvider implements BrowserProvider {
         networkErrors,
         javascriptErrors,
         consoleMessages,
+        networkActivity: [...networkActivity.values()],
         before,
         after,
         resolved,
@@ -425,6 +448,7 @@ export class PlaywrightBrowserProvider implements BrowserProvider {
         },
       };
     } finally {
+      await removeActionEventProbe(page).catch(() => undefined);
       page.off('request', onRequest);
       page.off('response', onResponse);
       page.off('requestfailed', onRequestFailed);
@@ -500,13 +524,113 @@ export class PlaywrightBrowserProvider implements BrowserProvider {
 
 async function captureActionSnapshot(page: Page, input: ObservePortalActionInput): Promise<PortalActionSnapshot> {
   const action = await resolveActionState(page, input.form, input.action);
+  const currentStageFieldStates = await readFieldStates(page, input.currentStageFields);
+  const form = await readFormState(page, input.form);
+  const observedEvents = await readActionEvents(page);
   return {
     url: sanitizeDiagnosticUrl(page.url()),
     action,
     statusMessages: await extractStatusMessages(page),
     currentStageFieldsVisible: await fieldVisibility(page, input.currentStageFields),
     nextStageFieldsVisible: await fieldVisibility(page, input.transition.visibleFields ?? []),
+    currentStageFieldStates,
+    form,
+    observedEvents,
   };
+}
+
+async function readFieldStates(
+  page: Page,
+  fields: readonly Pick<FieldInteractionDescriptor, 'css' | 'label' | 'name'>[],
+): Promise<PortalFieldState[]> {
+  const states: PortalFieldState[] = [];
+  for (const descriptor of fields) {
+    const locator = resolveFieldLocator(page, descriptor);
+    const count = await locator.count();
+    for (let index = 0; index < count; index += 1) {
+      const field = locator.nth(index);
+      if (!await field.isVisible()) continue;
+      states.push(await field.evaluate((element: any, label) => ({
+        locator: label,
+        visible: true,
+        valuePresent: String(element.value ?? '').length > 0,
+        nativeValid: element.checkValidity(),
+        frameworkValid: !element.classList.contains('ng-invalid') && element.getAttribute('aria-invalid') !== 'true',
+        disabled: Boolean(element.disabled),
+        readOnly: Boolean(element.readOnly),
+      }), fieldDescriptorLabel(descriptor)));
+    }
+  }
+  return states;
+}
+
+async function readFormState(
+  page: Page,
+  descriptor: FormLocatorDescriptor,
+): Promise<{ nativeValid: boolean; frameworkValid: boolean } | null> {
+  const anchor = descriptor.anchorInputSelector
+    ? page.locator(descriptor.anchorInputSelector).filter({ visible: true })
+    : page.getByLabel(descriptor.anchorLabel ?? '', { exact: true }).filter({ visible: true });
+  if (await anchor.count() !== 1) return null;
+  const form = anchor.locator(`xpath=ancestor::${descriptor.containerSelector}[1]`);
+  if (await form.count() !== 1) return null;
+  return form.evaluate((element: any) => ({
+    nativeValid: element.checkValidity(),
+    frameworkValid: !element.classList.contains('ng-invalid'),
+  }));
+}
+
+export function assertStageFieldsReady(states: readonly PortalFieldState[]): void {
+  const invalid = states.filter((state) => !state.visible || !state.valuePresent || !state.nativeValid || !state.frameworkValid || state.disabled || state.readOnly);
+  if (invalid.length > 0) throw new PortalStageFieldsInvalidError(invalid);
+}
+
+async function installActionEventProbe(page: Page, form: FormLocatorDescriptor, action: ActionLocatorDescriptor): Promise<void> {
+  await page.evaluate(({ form, action }) => {
+    const global = globalThis as any;
+    const dom = global.document;
+    const anchor = form.anchorInputSelector
+      ? dom.querySelector(form.anchorInputSelector)
+      : [...dom.querySelectorAll('label')].find((label: any) => label.textContent?.trim() === form.anchorLabel)?.control;
+    const root = anchor?.closest(form.containerSelector);
+    global.__paeObservedActionEvents = [];
+    const normalize = (value: string) => value.replace(/\s+/g, ' ').trim();
+    const click = (event: Event) => {
+      const target = event.target as any;
+      const candidate = target?.closest(action.css ?? 'button,[role="button"]');
+      const candidateText = String(candidate?.textContent ?? '');
+      if (candidate && root?.contains(candidate) && (!action.text || normalize(candidateText) === normalize(action.text))) {
+        global.__paeObservedActionEvents.push('click');
+      }
+    };
+    const submit = (event: Event) => { if (event.target === root) global.__paeObservedActionEvents.push('submit'); };
+    global.__paeActionProbe = { click, submit };
+    dom.addEventListener('click', click, true);
+    dom.addEventListener('submit', submit, true);
+  }, { form, action });
+}
+
+async function readActionEvents(page: Page): Promise<('click' | 'submit')[]> {
+  return page.evaluate(() => [...((globalThis as any).__paeObservedActionEvents ?? [])]);
+}
+
+async function removeActionEventProbe(page: Page): Promise<void> {
+  await page.evaluate(() => {
+    const global = globalThis as any;
+    const dom = global.document;
+    if (global.__paeActionProbe) {
+      dom.removeEventListener('click', global.__paeActionProbe.click, true);
+      dom.removeEventListener('submit', global.__paeActionProbe.submit, true);
+    }
+    delete global.__paeActionProbe;
+  });
+}
+
+export class PortalStageFieldsInvalidError extends Error {
+  readonly code = 'PORTAL_STAGE_FIELDS_INVALID';
+  constructor(readonly invalidFields: readonly PortalFieldState[]) {
+    super(`PORTAL_STAGE_FIELDS_INVALID: ${invalidFields.map((field) => field.locator).join(', ')}`);
+  }
 }
 
 async function resolveActionState(

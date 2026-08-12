@@ -26,7 +26,7 @@ export class PortalActionObservationService {
         requestUrl: observation.request.url ?? null,
         responseStatus: observation.request.status ?? null,
         requestDurationMs: observation.request.durationMs ?? null,
-        ...(toJson(observation.request.structure) === undefined ? {} : { requestStructure: toJson(observation.request.structure)! }),
+        requestStructure: toJson({ expected: observation.request.structure ?? null, networkActivity: observation.networkActivity ?? [] })!,
         responseContentType: observation.request.responseContentType ?? null,
         ...(toJson(observation.request.responseSummary) === undefined ? {} : { responseSummary: toJson(observation.request.responseSummary)! }),
         redirects: toJson(observation.request.redirects)!,

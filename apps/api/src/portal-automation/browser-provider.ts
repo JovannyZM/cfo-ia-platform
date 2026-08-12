@@ -60,7 +60,27 @@ export type FieldInteractionDescriptor = {
   name?: string;
   control: 'text' | 'select';
   expectedVisibleCount: number;
+  inputMethod?: 'fill' | 'press-sequentially';
   events?: readonly ('input' | 'change' | 'blur')[];
+};
+
+export type PortalFieldState = {
+  locator: string;
+  visible: boolean;
+  valuePresent: boolean;
+  nativeValid: boolean;
+  frameworkValid: boolean;
+  disabled: boolean;
+  readOnly: boolean;
+};
+
+export type PortalNetworkActivity = {
+  method: string;
+  url: string;
+  resourceType: string;
+  requestStructure?: unknown;
+  status?: number;
+  responseSummary?: unknown;
 };
 
 export type StageTransitionDescriptor = {
@@ -100,6 +120,9 @@ export type PortalActionSnapshot = {
   statusMessages: readonly string[];
   currentStageFieldsVisible: Readonly<Record<string, boolean>>;
   nextStageFieldsVisible: Readonly<Record<string, boolean>>;
+  currentStageFieldStates?: readonly PortalFieldState[];
+  form?: { nativeValid: boolean; frameworkValid: boolean } | null;
+  observedEvents?: readonly ('click' | 'submit')[];
 };
 
 export type PortalActionObservation = {
@@ -125,6 +148,7 @@ export type PortalActionObservation = {
   networkErrors: readonly string[];
   javascriptErrors: readonly string[];
   consoleMessages: readonly string[];
+  networkActivity?: readonly PortalNetworkActivity[];
   before: PortalActionSnapshot;
   after: PortalActionSnapshot;
   resolved: PortalActionSnapshot;
