@@ -23,6 +23,7 @@ export const INVOICE_AUDIT_ACTIONS = {
   FAILED: 'INVOICE_REQUEST_FAILED',
   CANCELLED: 'INVOICE_REQUEST_CANCELLED',
   SUPPLEMENTAL_EVIDENCE_ATTACHED: 'INVOICE_REQUEST_SUPPLEMENTAL_EVIDENCE_ATTACHED',
+  WINDOW_EXPIRED: 'INVOICE_REQUEST_WINDOW_EXPIRED',
 } as const;
 
 export type SupplementalInvoiceEvidenceInput = {
@@ -321,6 +322,34 @@ export class InvoiceRequestsService {
     return this.prisma.invoiceRequest.update({
       where: { id: requestId },
       data: { status: InvoiceRequestStatus.DOCUMENTS_TIMEOUT, nextCheckAt: null, failureReason: 'DOCUMENTS_TIMEOUT' },
+    });
+  }
+
+  async markInvoiceWindowExpired(
+    workspaceId: string,
+    requestId: string,
+    attemptId: string | undefined,
+    evidence: { ticketDate: Date | string; evaluatedAt: Date; elapsedDays: number | null; limitDays: number | null },
+  ) {
+    const request = await this.scopedRequest(workspaceId, requestId);
+    return this.prisma.$transaction(async (tx) => {
+      if (attemptId) await tx.invoiceRequestAttempt.update({ where: { id: attemptId }, data: {
+        status: InvoiceRequestAttemptStatus.FAILED, finishedAt: evidence.evaluatedAt,
+        errorCode: 'INVOICE_WINDOW_EXPIRED', errorMessage: 'Invoice window expired',
+      } });
+      const updated = await tx.invoiceRequest.update({ where: { id: requestId }, data: {
+        status: InvoiceRequestStatus.INVOICE_WINDOW_EXPIRED, failureReason: 'INVOICE_WINDOW_EXPIRED',
+      } });
+      await tx.auditEvent.create({ data: {
+        accountId: request.workspace.accountId, actorUserId: request.requestedByUserId,
+        action: INVOICE_AUDIT_ACTIONS.WINDOW_EXPIRED, entityType: 'InvoiceRequest', entityId: requestId,
+        metadata: {
+          ticketDate: new Date(evidence.ticketDate).toISOString(),
+          evaluatedAt: evidence.evaluatedAt.toISOString(), elapsedDays: evidence.elapsedDays,
+          limitDays: evidence.limitDays, ...(attemptId ? { attemptId } : {}),
+        },
+      } });
+      return updated;
     });
   }
 

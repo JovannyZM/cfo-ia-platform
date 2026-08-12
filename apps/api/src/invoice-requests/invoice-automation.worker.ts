@@ -67,6 +67,7 @@ export class InvoiceAutomationWorker implements Worker {
       documentNumber: payload.documentNumber ?? '',
       ...(payload.documentIdentifiers ? { documentIdentifiers: payload.documentIdentifiers } : {}),
       totalAmount: payload.originalAmount,
+      occurredAt: payload.occurredAt,
       taxProfile,
     };
     const resolvedDocumentNumber = adapter.resolveDocumentNumber(portalContext);
@@ -88,7 +89,15 @@ export class InvoiceAutomationWorker implements Worker {
       return [];
     }
     const validatedContext = { ...portalContext, documentNumber: resolvedDocumentNumber };
-    adapter.validatePreflight(validatedContext);
+    try {
+      adapter.validatePreflight(validatedContext);
+    } catch (error) {
+      if (isInvoiceWindowExpired(error)) {
+        await this.requests.markInvoiceWindowExpired(event.workspaceId, request.id, undefined, error);
+        return [];
+      }
+      throw error;
+    }
     if (request.status !== InvoiceRequestStatus.READY) return [];
 
     const started = await this.requests.tryStart(event.workspaceId, request.id, adapter.adapterKey);
@@ -115,12 +124,21 @@ export class InvoiceAutomationWorker implements Worker {
       documentNumber: legacyNumber,
       ...(identifiers.length ? { documentIdentifiers: identifiers } : {}),
       totalAmount: request.expense.originalAmount.toString(),
+      occurredAt: request.expense.occurredAt,
       taxProfile: request.taxProfile,
     };
     const documentNumber = adapter.resolveDocumentNumber(portalContext);
     if (!documentNumber) throw new Error('INVOICE_RETRY_DOCUMENT_NUMBER_INVALID');
     const validatedContext = { ...portalContext, documentNumber };
-    adapter.validatePreflight(validatedContext);
+    try {
+      adapter.validatePreflight(validatedContext);
+    } catch (error) {
+      if (isInvoiceWindowExpired(error)) {
+        await this.requests.markInvoiceWindowExpired(request.workspaceId, request.id, undefined, error);
+        return 'NOT_RETRYABLE';
+      }
+      throw error;
+    }
     const started = await this.requests.tryRetryStart(request.workspaceId, request.id, adapter.adapterKey);
     if (!started) return 'NOT_RETRYABLE';
     await this.runStartedRequest(request.workspaceId, request.id, started.attempt.id, adapter, validatedContext);
@@ -177,6 +195,10 @@ export class InvoiceAutomationWorker implements Worker {
         });
       } else if (result.outcome === 'ALREADY_COMPLETED') {
         await this.requests.markAlreadyCompleted(workspaceId, requestId, attemptId);
+      } else if (result.outcome === 'INVOICE_WINDOW_EXPIRED') {
+        await this.requests.markInvoiceWindowExpired(workspaceId, requestId, attemptId, {
+          ticketDate: context.occurredAt, evaluatedAt: new Date(), elapsedDays: null, limitDays: null,
+        });
       } else if (result.outcome === 'REJECTED' || result.outcome === 'UNKNOWN_OUTCOME') {
         await this.requests.fail(
           workspaceId,
@@ -208,6 +230,13 @@ function extractExternalReference(stages: readonly { responseSummary?: unknown }
     }
   }
   return undefined;
+}
+
+function isInvoiceWindowExpired(error: unknown): error is Error & {
+  code: 'INVOICE_WINDOW_EXPIRED'; ticketDate: Date | string; evaluatedAt: Date; elapsedDays: number; limitDays: number;
+} {
+  return error instanceof Error && 'code' in error && error.code === 'INVOICE_WINDOW_EXPIRED' &&
+    'ticketDate' in error && 'evaluatedAt' in error && 'elapsedDays' in error && 'limitDays' in error;
 }
 
 function parseDocumentIdentifiers(value: unknown): NonNullable<AutomatedInvoicePortalContext['documentIdentifiers']> {

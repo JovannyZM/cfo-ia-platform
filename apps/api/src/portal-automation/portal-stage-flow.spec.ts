@@ -143,7 +143,7 @@ describe('Costco staged adapter', () => {
   it('selects only a 20 digit BARCODE as Costco comprobante', () => {
     const costco = new CostcoInvoiceReadOnlyAdapter();
     const context = {
-      documentNumber: '2518', totalAmount: '1383.26', taxProfile: completeProfile,
+      documentNumber: '2518', totalAmount: '1383.26', occurredAt: '2026-08-01T12:00:00Z', taxProfile: completeProfile,
       documentIdentifiers: [
         { type: 'TICKET_NUMBER' as const, value: '2518' },
         { type: 'AUTHORIZATION_NUMBER' as const, value: '842777' },
@@ -155,7 +155,7 @@ describe('Costco staged adapter', () => {
 
   it('rejects ticket numbers, authorization numbers and card last4 as Costco comprobante', () => {
     const costco = new CostcoInvoiceReadOnlyAdapter();
-    const context = { documentNumber: '0633', totalAmount: '1383.26', taxProfile: completeProfile };
+    const context = { documentNumber: '0633', totalAmount: '1383.26', occurredAt: '2026-08-01T12:00:00Z', taxProfile: completeProfile };
     expect(costco.resolveDocumentNumber(context)).toBeUndefined();
     expect(() => costco.validatePreflight(context)).toThrowError(/COSTCO_COMPROBANTE_INVALID/);
   });
@@ -163,7 +163,7 @@ describe('Costco staged adapter', () => {
   it('does not accept an untyped 20 digit document number as a silent BARCODE fallback', () => {
     const costco = new CostcoInvoiceReadOnlyAdapter();
     expect(costco.resolveDocumentNumber({
-      documentNumber: '71901102120708261246', totalAmount: '1383.26', taxProfile: completeProfile,
+      documentNumber: '71901102120708261246', totalAmount: '1383.26', occurredAt: '2026-08-01T12:00:00Z', taxProfile: completeProfile,
       documentIdentifiers: [{ type: 'TICKET_NUMBER', value: '71901102120708261246' }],
     })).toBeUndefined();
   });
@@ -177,10 +177,48 @@ describe('Costco staged adapter', () => {
     })).toBe('ALREADY_COMPLETED');
   });
 
+  it('classifies Costco business code 448 as an expired invoice window', () => {
+    const costco = new CostcoInvoiceReadOnlyAdapter();
+    expect(costco.resolveActionOutcome('IDENTIFY_PURCHASE', {
+      ...observation,
+      stageKey: 'IDENTIFY_PURCHASE',
+      request: { observed: true, status: 200, responseSummary: { status_code: 448 }, redirects: [] },
+    })).toBe('INVOICE_WINDOW_EXPIRED');
+  });
+
+  it.each([
+    ['inside', '2026-06-03T12:00:00.000Z'],
+    ['exactly', '2026-06-02T12:00:00.000Z'],
+  ])('allows a ticket %s the configured 60-day Costco window', (_case, occurredAt) => {
+    const costco = new CostcoInvoiceReadOnlyAdapter();
+    expect(() => costco.validatePreflight({
+      documentNumber: '71901102120708261246', totalAmount: '1383.26', occurredAt, taxProfile: completeProfile,
+    }, new Date('2026-08-01T12:00:00.000Z'))).not.toThrow();
+  });
+
+  it('rejects a ticket older than 60 days and preserves the evaluation evidence', () => {
+    const costco = new CostcoInvoiceReadOnlyAdapter();
+    try {
+      costco.validatePreflight({
+        documentNumber: '71901102120708261246', totalAmount: '1383.26',
+        occurredAt: '2026-06-01T12:00:00.000Z', taxProfile: completeProfile,
+      }, new Date('2026-08-01T12:00:00.000Z'));
+      throw new Error('Expected Costco preflight to reject an expired ticket');
+    } catch (error) {
+      expect(error).toMatchObject({
+        code: 'INVOICE_WINDOW_EXPIRED',
+        elapsedDays: 61,
+        limitDays: 60,
+        ticketDate: '2026-06-01T12:00:00.000Z',
+        evaluatedAt: new Date('2026-08-01T12:00:00.000Z'),
+      });
+    }
+  });
+
   it('accepts a complete Costco preflight and maps all stage-two fiscal fields', () => {
     const costco = new CostcoInvoiceReadOnlyAdapter();
     const context = {
-      documentNumber: '71901102120708261246', totalAmount: '1383.26', taxProfile: completeProfile,
+      documentNumber: '71901102120708261246', totalAmount: '1383.26', occurredAt: '2026-08-01T12:00:00Z', taxProfile: completeProfile,
       documentIdentifiers: [{ type: 'BARCODE' as const, value: '71901102120708261246' }],
     };
     expect(() => costco.validatePreflight(context)).not.toThrow();

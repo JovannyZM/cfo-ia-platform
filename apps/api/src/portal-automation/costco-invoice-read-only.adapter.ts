@@ -58,6 +58,7 @@ export class CostcoInvoiceReadOnlyAdapter implements PortalActionAdapter<'CONTIN
   readonly portalUrl = COSTCO_INVOICE_URL;
   readonly allowedDomains = COSTCO_ALLOWED_DOMAINS;
   readonly merchantKeys = ['COSTCO'] as const;
+  readonly invoiceWindowDays = 60;
 
   constructor(@Optional() registry?: PortalAdapterRegistry) {
     registry?.register(this);
@@ -154,9 +155,8 @@ export class CostcoInvoiceReadOnlyAdapter implements PortalActionAdapter<'CONTIN
     const summary = JSON.stringify(observation.request.responseSummary ?? {}).toUpperCase();
     const messages = [...observation.resolved.statusMessages, ...observation.after.statusMessages]
       .join(' ').normalize('NFD').replace(/\p{Diacritic}/gu, '').toUpperCase();
-    return summary.includes('447') || messages.includes('YA SE ENCUENTRA FACTURADO')
-      ? 'ALREADY_COMPLETED'
-      : undefined;
+    if (summary.includes('448') || messages.includes('SOLO FACTURAS DEL ANO ACTUAL')) return 'INVOICE_WINDOW_EXPIRED';
+    return summary.includes('447') || messages.includes('YA SE ENCUENTRA FACTURADO') ? 'ALREADY_COMPLETED' : undefined;
   }
 
   buildFlowInput(
@@ -207,12 +207,16 @@ export class CostcoInvoiceReadOnlyAdapter implements PortalActionAdapter<'CONTIN
     return barcode?.value.trim();
   }
 
-  validatePreflight(context: AutomatedInvoicePortalContext): void {
+  validatePreflight(context: AutomatedInvoicePortalContext, evaluatedAt = new Date()): void {
     if (!/^\d{20}$/u.test(context.documentNumber)) {
       throw new CostcoPreflightError('COSTCO_COMPROBANTE_INVALID');
     }
     if (!/^\d+(?:\.\d+)?$/u.test(context.totalAmount) || Number(context.totalAmount) <= 0) {
       throw new CostcoPreflightError('COSTCO_AMOUNT_INVALID');
+    }
+    const ageDays = calendarAgeDays(context.occurredAt, evaluatedAt);
+    if (ageDays > this.invoiceWindowDays) {
+      throw new CostcoInvoiceWindowExpiredError(context.occurredAt, evaluatedAt, ageDays, this.invoiceWindowDays);
     }
     this.buildFlowInput(
       { ticketOrOrder: context.documentNumber, totalPaid: context.totalAmount, rfc: context.taxProfile.rfc },
@@ -320,4 +324,22 @@ export class CostcoInvoiceReadOnlyAdapter implements PortalActionAdapter<'CONTIN
 
 export class CostcoPreflightError extends Error {
   readonly code = 'COSTCO_PREFLIGHT_FAILED';
+}
+
+export class CostcoInvoiceWindowExpiredError extends Error {
+  readonly code = 'INVOICE_WINDOW_EXPIRED';
+  constructor(
+    readonly ticketDate: Date | string,
+    readonly evaluatedAt: Date,
+    readonly elapsedDays: number,
+    readonly limitDays: number,
+  ) { super('Costco invoice window expired'); }
+}
+
+function calendarAgeDays(ticketDate: Date | string, evaluatedAt: Date): number {
+  const ticket = new Date(ticketDate);
+  if (Number.isNaN(ticket.getTime())) throw new CostcoPreflightError('COSTCO_TICKET_DATE_INVALID');
+  const ticketDay = Date.UTC(ticket.getUTCFullYear(), ticket.getUTCMonth(), ticket.getUTCDate());
+  const evaluationDay = Date.UTC(evaluatedAt.getUTCFullYear(), evaluatedAt.getUTCMonth(), evaluatedAt.getUTCDate());
+  return Math.floor((evaluationDay - ticketDay) / 86_400_000);
 }

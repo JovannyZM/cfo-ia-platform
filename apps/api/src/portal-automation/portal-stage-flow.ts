@@ -13,7 +13,7 @@ import type {
   CapturedPortalDocument,
 } from './browser-provider';
 
-export type PortalFlowOutcome = 'COMPLETED' | 'ACCEPTED_PENDING' | 'ALREADY_COMPLETED' | 'REJECTED' | 'UNKNOWN_OUTCOME';
+export type PortalFlowOutcome = 'COMPLETED' | 'ACCEPTED_PENDING' | 'ALREADY_COMPLETED' | 'INVOICE_WINDOW_EXPIRED' | 'REJECTED' | 'UNKNOWN_OUTCOME';
 
 export type PortalStageField = {
   inputKey: string;

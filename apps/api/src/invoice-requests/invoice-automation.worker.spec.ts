@@ -58,6 +58,7 @@ function harness(options: { requestStatus?: InvoiceRequestStatus; supported?: bo
     markAcceptedPending: vi.fn().mockResolvedValue(undefined),
     markNeedsDocumentData: vi.fn().mockResolvedValue(undefined),
     markAlreadyCompleted: vi.fn().mockResolvedValue(undefined),
+    markInvoiceWindowExpired: vi.fn().mockResolvedValue(undefined),
     fail: vi.fn().mockResolvedValue(undefined),
   } as unknown as InvoiceRequestsService;
   const adapter = {
@@ -153,6 +154,28 @@ describe('InvoiceAutomationWorker', () => {
     expect(h.portalFlows.execute).not.toHaveBeenCalled();
   });
 
+  it('records an expired Costco window before opening the portal or consuming an attempt', async () => {
+    const h = harness();
+    const evaluation = new Date('2026-08-01T12:00:00.000Z');
+    const expired = Object.assign(new Error('Costco invoice window expired'), {
+      code: 'INVOICE_WINDOW_EXPIRED',
+      ticketDate: '2026-06-01T12:00:00.000Z',
+      evaluatedAt: evaluation,
+      elapsedDays: 61,
+      limitDays: 60,
+    });
+    (h.adapter.validatePreflight as ReturnType<typeof vi.fn>).mockImplementationOnce(() => { throw expired; });
+
+    await h.worker.execute(event({ occurredAt: expired.ticketDate }));
+
+    expect(h.requests.create).toHaveBeenCalledOnce();
+    expect(h.requests.markInvoiceWindowExpired).toHaveBeenCalledWith(
+      ids.workspace, ids.request, undefined, expired,
+    );
+    expect(h.requests.tryStart).not.toHaveBeenCalled();
+    expect(h.portalFlows.execute).not.toHaveBeenCalled();
+  });
+
   it('classifies an already invoiced merchant response separately from a technical failure', async () => {
     const h = harness();
     (h.portalFlows.execute as ReturnType<typeof vi.fn>).mockResolvedValueOnce({ outcome: 'ALREADY_COMPLETED', stages: [] });
@@ -189,6 +212,26 @@ describe('InvoiceAutomationWorker', () => {
     const h = harness();
     (h.requests.tryRetryStart as ReturnType<typeof vi.fn>).mockResolvedValueOnce(null);
     await expect(h.worker.retry(ids.request)).resolves.toBe('NOT_RETRYABLE');
+    expect(h.portalFlows.execute).not.toHaveBeenCalled();
+  });
+
+  it('does not consume a retry attempt when the invoice window has expired', async () => {
+    const h = harness();
+    const expired = Object.assign(new Error('Costco invoice window expired'), {
+      code: 'INVOICE_WINDOW_EXPIRED',
+      ticketDate: new Date('2026-06-01T12:00:00.000Z'),
+      evaluatedAt: new Date('2026-08-01T12:00:00.000Z'),
+      elapsedDays: 61,
+      limitDays: 60,
+    });
+    (h.adapter.validatePreflight as ReturnType<typeof vi.fn>).mockImplementationOnce(() => { throw expired; });
+
+    await expect(h.worker.retry(ids.request)).resolves.toBe('NOT_RETRYABLE');
+
+    expect(h.requests.markInvoiceWindowExpired).toHaveBeenCalledWith(
+      ids.workspace, ids.request, undefined, expired,
+    );
+    expect(h.requests.tryRetryStart).not.toHaveBeenCalled();
     expect(h.portalFlows.execute).not.toHaveBeenCalled();
   });
 });

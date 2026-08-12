@@ -8,6 +8,7 @@ export type AutomatedInvoicePortalContext = {
     value: string;
   }[];
   totalAmount: string;
+  occurredAt: Date | string;
   taxProfile: {
     status: string;
     approvedAt: Date | string | null;
