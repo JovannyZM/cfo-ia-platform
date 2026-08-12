@@ -96,10 +96,12 @@ enum DailyCloseDeliveryStatus {
 
 enum InvoiceRequestStatus {
   PENDING
+  NEEDS_DOCUMENT_DATA
   NEEDS_TAX_DATA
   READY
   PROCESSING
   COMPLETED
+  ALREADY_INVOICED
   FAILED
   CANCELLED
 }

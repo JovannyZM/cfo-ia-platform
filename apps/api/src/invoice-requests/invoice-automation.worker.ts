@@ -36,7 +36,7 @@ export class InvoiceAutomationWorker implements Worker {
 
   async execute(event: DomainEvent): Promise<readonly DomainEvent[]> {
     const payload = event.payload as ExpenseRegisteredPayload;
-    if ((!payload.documentNumber && !payload.documentIdentifiers?.length) || !payload.requestedByUserId) return [];
+    if (!payload.requestedByUserId) return [];
 
     const profiles = await this.prisma.merchantInvoiceProfile.findMany({ where: { active: true } });
     const merchant = uniqueMerchantMatch(payload.merchantName, profiles);
@@ -66,10 +66,6 @@ export class InvoiceAutomationWorker implements Worker {
       taxProfile,
     };
     const resolvedDocumentNumber = adapter.resolveDocumentNumber(portalContext);
-    if (!resolvedDocumentNumber) return [];
-    const validatedContext = { ...portalContext, documentNumber: resolvedDocumentNumber };
-    adapter.validatePreflight(validatedContext);
-
     const request = await this.requests.create({
       workspaceId: event.workspaceId,
       expenseId: payload.expenseId,
@@ -78,8 +74,14 @@ export class InvoiceAutomationWorker implements Worker {
       channel: payload.sourceChannel ?? 'INTERNAL',
       taxProfileId: taxProfile.id,
       requestedByUserId: payload.requestedByUserId,
-      documentNumber: resolvedDocumentNumber,
+      ...(resolvedDocumentNumber ? { documentNumber: resolvedDocumentNumber } : {}),
     });
+    if (!resolvedDocumentNumber) {
+      await this.requests.markNeedsDocumentData(event.workspaceId, request.id, 'BARCODE_REQUIRED');
+      return [];
+    }
+    const validatedContext = { ...portalContext, documentNumber: resolvedDocumentNumber };
+    adapter.validatePreflight(validatedContext);
     if (request.status !== InvoiceRequestStatus.READY) return [];
 
     const started = await this.requests.tryStart(event.workspaceId, request.id, adapter.adapterKey);
@@ -158,6 +160,8 @@ export class InvoiceAutomationWorker implements Worker {
       );
       if (result.outcome === 'ACCEPTED_PENDING') {
         await this.requests.markAcceptedPending(workspaceId, requestId, attemptId);
+      } else if (result.outcome === 'ALREADY_COMPLETED') {
+        await this.requests.markAlreadyCompleted(workspaceId, requestId, attemptId);
       } else if (result.outcome === 'REJECTED' || result.outcome === 'UNKNOWN_OUTCOME') {
         await this.requests.fail(
           workspaceId,

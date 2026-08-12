@@ -12,7 +12,7 @@ import type {
   PortalActionObservation,
 } from './browser-provider';
 
-export type PortalFlowOutcome = 'COMPLETED' | 'ACCEPTED_PENDING' | 'REJECTED' | 'UNKNOWN_OUTCOME';
+export type PortalFlowOutcome = 'COMPLETED' | 'ACCEPTED_PENDING' | 'ALREADY_COMPLETED' | 'REJECTED' | 'UNKNOWN_OUTCOME';
 
 export type PortalStageField = {
   inputKey: string;
@@ -36,6 +36,7 @@ export interface StagedPortalAdapter<ActionKey extends string = string> {
   getStages(): readonly PortalStageDescriptor<ActionKey>[];
   getActionLocator(actionKey: ActionKey): ActionLocatorDescriptor;
   resolveOutcome(stageKey: string, evidence: StageTransitionEvidence): PortalFlowOutcome | undefined;
+  resolveActionOutcome?(stageKey: string, observation: PortalActionObservation): PortalFlowOutcome | undefined;
 }
 
 export type PortalStageExecution = {
@@ -83,6 +84,11 @@ export class PortalStageFlowEngine {
       });
       await onObservation?.(observation);
       const actionResolution = observation.actionResolution;
+      const actionOutcome = adapter.resolveActionOutcome?.(stage.key, observation);
+      if (actionOutcome) {
+        outcome = actionOutcome;
+        break;
+      }
       if (!observation.transitionEvidence) throw new PortalActionObservationError(observation);
       const transitionEvidence = observation.transitionEvidence;
       executions.push({ stageKey: stage.key, actionResolution, transitionEvidence });

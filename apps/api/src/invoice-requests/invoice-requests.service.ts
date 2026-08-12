@@ -218,6 +218,34 @@ export class InvoiceRequestsService {
     });
   }
 
+  async markNeedsDocumentData(workspaceId: string, requestId: string, reason: string) {
+    const request = await this.scopedRequest(workspaceId, requestId);
+    if (request.status !== InvoiceRequestStatus.READY && request.status !== InvoiceRequestStatus.PENDING) return request;
+    return this.prisma.invoiceRequest.update({
+      where: { id: requestId },
+      data: { status: InvoiceRequestStatus.NEEDS_DOCUMENT_DATA, failureReason: reason.slice(0, 500) },
+    });
+  }
+
+  async markAlreadyCompleted(workspaceId: string, requestId: string, attemptId: string) {
+    const request = await this.scopedRequest(workspaceId, requestId);
+    return this.prisma.$transaction(async (tx) => {
+      await tx.invoiceRequestAttempt.update({ where: { id: attemptId }, data: {
+        status: InvoiceRequestAttemptStatus.COMPLETED, finishedAt: new Date(),
+        errorCode: 'BUSINESS_ALREADY_COMPLETED', errorMessage: 'Document was previously invoiced by the merchant',
+      } });
+      const updated = await tx.invoiceRequest.update({ where: { id: requestId }, data: {
+        status: InvoiceRequestStatus.ALREADY_INVOICED, completedAt: new Date(), failureReason: 'BUSINESS_ALREADY_COMPLETED',
+      } });
+      await tx.auditEvent.create({ data: {
+        accountId: request.workspace.accountId, actorUserId: request.requestedByUserId,
+        action: 'INVOICE_REQUEST_ALREADY_COMPLETED', entityType: 'InvoiceRequest', entityId: requestId,
+        metadata: { attemptId, businessCode: '447' },
+      } });
+      return updated;
+    });
+  }
+
   async tryRetryStart(workspaceId: string, requestId: string, adapterKey: string) {
     const request = await this.scopedRequest(workspaceId, requestId);
     if (request.status !== InvoiceRequestStatus.FAILED) return null;

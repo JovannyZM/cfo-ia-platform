@@ -55,6 +55,8 @@ function harness(options: { requestStatus?: InvoiceRequestStatus; supported?: bo
     tryStart: vi.fn().mockResolvedValue({ attempt: { id: ids.attempt } }),
     tryRetryStart: vi.fn().mockResolvedValue({ attempt: { id: ids.attempt } }),
     markAcceptedPending: vi.fn().mockResolvedValue(undefined),
+    markNeedsDocumentData: vi.fn().mockResolvedValue(undefined),
+    markAlreadyCompleted: vi.fn().mockResolvedValue(undefined),
     fail: vi.fn().mockResolvedValue(undefined),
   } as unknown as InvoiceRequestsService;
   const adapter = {
@@ -102,9 +104,17 @@ describe('InvoiceAutomationWorker', () => {
     expect(h.portalFlows.execute).not.toHaveBeenCalled();
   });
 
-  it('does not create a request without a document number or requesting user', async () => {
+  it('persists an explicit missing-document state without opening the portal', async () => {
     const h = harness();
     await h.worker.execute(event({ documentNumber: undefined }));
+    expect(h.requests.create).toHaveBeenCalledOnce();
+    expect(h.requests.markNeedsDocumentData).toHaveBeenCalledWith(ids.workspace, ids.request, 'BARCODE_REQUIRED');
+    expect(h.requests.tryStart).not.toHaveBeenCalled();
+    expect(h.portalFlows.execute).not.toHaveBeenCalled();
+  });
+
+  it('does not create a request without a requesting user', async () => {
+    const h = harness();
     await h.worker.execute(event({ requestedByUserId: undefined }));
     expect(h.requests.create).not.toHaveBeenCalled();
   });
@@ -124,16 +134,25 @@ describe('InvoiceAutomationWorker', () => {
       documentNumber: '71901102120708261246',
     }));
     expect((h.adapter.validatePreflight as ReturnType<typeof vi.fn>).mock.invocationCallOrder[0])
-      .toBeLessThan((h.requests.create as ReturnType<typeof vi.fn>).mock.invocationCallOrder[0]!);
+      .toBeLessThan((h.requests.tryStart as ReturnType<typeof vi.fn>).mock.invocationCallOrder[0]!);
   });
 
-  it('does not create or consume an attempt when adapter preflight rejects the evidence', async () => {
+  it('does not consume an attempt and records missing data when BARCODE cannot be resolved', async () => {
     const h = harness();
     (h.adapter.resolveDocumentNumber as ReturnType<typeof vi.fn>).mockReturnValueOnce(undefined);
     await h.worker.execute(event({ documentNumber: '2518', paymentLast4: '0633' }));
-    expect(h.requests.create).not.toHaveBeenCalled();
+    expect(h.requests.create).toHaveBeenCalledOnce();
+    expect(h.requests.markNeedsDocumentData).toHaveBeenCalledWith(ids.workspace, ids.request, 'BARCODE_REQUIRED');
     expect(h.requests.tryStart).not.toHaveBeenCalled();
     expect(h.portalFlows.execute).not.toHaveBeenCalled();
+  });
+
+  it('classifies an already invoiced merchant response separately from a technical failure', async () => {
+    const h = harness();
+    (h.portalFlows.execute as ReturnType<typeof vi.fn>).mockResolvedValueOnce({ outcome: 'ALREADY_COMPLETED' });
+    await h.worker.execute(event());
+    expect(h.requests.markAlreadyCompleted).toHaveBeenCalledWith(ids.workspace, ids.request, ids.attempt);
+    expect(h.requests.fail).not.toHaveBeenCalled();
   });
 
   it('selects automation through merchant configuration rather than Costco logic in the worker', async () => {

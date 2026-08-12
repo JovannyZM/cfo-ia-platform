@@ -105,6 +105,22 @@ describe('PortalStageFlowEngine', () => {
     expect(result.outcome).toBe('ACCEPTED_PENDING');
   });
 
+  it('allows an adapter to classify a business outcome before a stage transition', async () => {
+    const browser = browserHarness();
+    const withoutTransition = Object.fromEntries(
+      Object.entries(observation).filter(([key]) => key !== 'transitionEvidence'),
+    ) as Omit<typeof observation, 'transitionEvidence'>;
+    vi.mocked(browser.observeAction).mockResolvedValueOnce({
+      ...withoutTransition,
+      outcome: 'VISIBLE_ERROR',
+      request: { observed: true, status: 200, responseSummary: { status_code: 447 }, redirects: [] },
+    });
+    const configured = adapter([stage('ONE', 'value', 'SEND')]);
+    configured.resolveActionOutcome = () => 'ALREADY_COMPLETED';
+    const result = await new PortalStageFlowEngine().execute(browser, session, configured, { value: 'x' }, 5_000);
+    expect(result.outcome).toBe('ALREADY_COMPLETED');
+  });
+
   it.each([1, 2, 3])('supports an adapter with %i stage(s) without engine changes', async (count) => {
     const stages = Array.from({ length: count }, (_, index) => stage(`STAGE_${index}`, `value${index}`, `ACTION_${index}`));
     const input = Object.fromEntries(stages.map((_, index) => [`value${index}`, String(index)]));
@@ -142,6 +158,15 @@ describe('Costco staged adapter', () => {
     const context = { documentNumber: '0633', totalAmount: '1383.26', taxProfile: completeProfile };
     expect(costco.resolveDocumentNumber(context)).toBeUndefined();
     expect(() => costco.validatePreflight(context)).toThrowError(/COSTCO_COMPROBANTE_INVALID/);
+  });
+
+  it('classifies Costco business code 447 as already completed', () => {
+    const costco = new CostcoInvoiceReadOnlyAdapter();
+    expect(costco.resolveActionOutcome('IDENTIFY_PURCHASE', {
+      ...observation,
+      stageKey: 'IDENTIFY_PURCHASE',
+      request: { observed: true, status: 200, responseSummary: { status_code: 447 }, redirects: [] },
+    })).toBe('ALREADY_COMPLETED');
   });
 
   it('accepts a complete Costco preflight and maps all stage-two fiscal fields', () => {

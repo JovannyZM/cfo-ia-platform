@@ -1,5 +1,5 @@
 import { Injectable, Optional } from '@nestjs/common';
-import type { ActionLocatorDescriptor, ActionLocatorResult, BrowserProvider, BrowserSession, FormLocatorDescriptor, PortalActionAdapter, VisibleField } from './browser-provider';
+import type { ActionLocatorDescriptor, ActionLocatorResult, BrowserProvider, BrowserSession, FormLocatorDescriptor, PortalActionAdapter, PortalActionObservation, VisibleField } from './browser-provider';
 import type { PortalFlowOutcome, PortalStageDescriptor, StagedPortalAdapter } from './portal-stage-flow';
 import { PortalAdapterRegistry, type AutomatedInvoicePortalContext } from './portal-adapter.registry';
 
@@ -136,6 +136,16 @@ export class CostcoInvoiceReadOnlyAdapter implements PortalActionAdapter<'CONTIN
 
   resolveOutcome(stageKey: string): PortalFlowOutcome | undefined {
     return stageKey === 'TAX_DATA' ? 'ACCEPTED_PENDING' : undefined;
+  }
+
+  resolveActionOutcome(stageKey: string, observation: PortalActionObservation): PortalFlowOutcome | undefined {
+    if (stageKey !== 'IDENTIFY_PURCHASE') return undefined;
+    const summary = JSON.stringify(observation.request.responseSummary ?? {}).toUpperCase();
+    const messages = [...observation.resolved.statusMessages, ...observation.after.statusMessages]
+      .join(' ').normalize('NFD').replace(/\p{Diacritic}/gu, '').toUpperCase();
+    return summary.includes('447') || messages.includes('YA SE ENCUENTRA FACTURADO')
+      ? 'ALREADY_COMPLETED'
+      : undefined;
   }
 
   buildFlowInput(
