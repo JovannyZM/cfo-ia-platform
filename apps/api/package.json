@@ -12,6 +12,8 @@
     "backfill:expense-budgets": "tsx src/budgets/backfill-expense-budgets.ts",
     "pae:probe:costco": "tsx src/portal-automation/probe-costco.ts",
     "pae:probe:costco:controlled": "tsx src/portal-automation/probe-costco-controlled.ts",
+    "pae:smoke:chromium": "node dist/portal-automation/smoke-chromium.js",
+    "invoice:retry": "node dist/invoice-requests/retry-invoice-request.js",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {

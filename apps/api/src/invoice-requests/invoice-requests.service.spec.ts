@@ -135,6 +135,28 @@ describe('InvoiceRequestsService', () => {
     expect(h.prisma.invoiceRequestAttempt.create).not.toHaveBeenCalled();
   });
 
+  it('atomically claims a FAILED request and preserves the previous attempt on retry', async () => {
+    const h = harness({ requestStatus: InvoiceRequestStatus.FAILED });
+    h.attempts.push({ id: 'previous-attempt', status: 'FAILED' });
+    const result = await h.service.tryRetryStart(ids.workspace, ids.request, 'configured-adapter');
+    expect(result?.attempt).toMatchObject({ attemptNumber: 2, adapterKey: 'configured-adapter' });
+    expect(h.attempts).toHaveLength(2);
+    expect(h.prisma.invoiceRequest.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ id: ids.request, status: InvoiceRequestStatus.FAILED }),
+    }));
+    expect(h.audits[0]).toMatchObject({
+      action: INVOICE_AUDIT_ACTIONS.STARTED,
+      metadata: expect.objectContaining({ retry: true, attemptNumber: 2 }),
+    });
+  });
+
+  it('rejects a concurrent retry claim without creating another attempt', async () => {
+    const h = harness({ requestStatus: InvoiceRequestStatus.FAILED });
+    h.prisma.invoiceRequest.updateMany.mockResolvedValueOnce({ count: 0 });
+    await expect(h.service.tryRetryStart(ids.workspace, ids.request, 'configured-adapter')).resolves.toBeNull();
+    expect(h.prisma.invoiceRequestAttempt.create).not.toHaveBeenCalled();
+  });
+
   it('records an auditable failure', async () => {
     const h = harness({ requestStatus: InvoiceRequestStatus.PROCESSING });
     h.attempts.push({ id: ids.attempt });

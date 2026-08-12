@@ -41,10 +41,19 @@ function harness(options: { requestStatus?: InvoiceRequestStatus; supported?: bo
   const prisma = {
     merchantInvoiceProfile: { findMany: vi.fn().mockResolvedValue(options.supported === false ? [] : [{ merchantKey: 'COSTCO', displayName: 'Costco' }]) },
     taxProfile: { findMany: vi.fn().mockResolvedValue([taxProfile]) },
+    invoiceRequest: { findUnique: vi.fn().mockResolvedValue({
+      id: ids.request, workspaceId: ids.workspace, merchantKey: 'COSTCO', status: InvoiceRequestStatus.FAILED,
+      expense: { sourceEventId: 'source-event', sourceChannel: 'TELEGRAM', sourceConversationId: 'chat', originalAmount: { toString: () => '6893.12' } },
+      taxProfile,
+    }) },
+    conversationSession: { findMany: vi.fn().mockResolvedValue([{ contextJson: {
+      sourceEventId: 'source-event', draft: { documentNumber: 'ticket-number' },
+    } }]) },
   } as unknown as PrismaService;
   const requests = {
     create: vi.fn().mockResolvedValue({ id: ids.request, status: options.requestStatus ?? InvoiceRequestStatus.READY }),
     tryStart: vi.fn().mockResolvedValue({ attempt: { id: ids.attempt } }),
+    tryRetryStart: vi.fn().mockResolvedValue({ attempt: { id: ids.attempt } }),
     markAcceptedPending: vi.fn().mockResolvedValue(undefined),
     fail: vi.fn().mockResolvedValue(undefined),
   } as unknown as InvoiceRequestsService;
@@ -109,5 +118,22 @@ describe('InvoiceAutomationWorker', () => {
   it('registers itself for ExpenseRegistered', () => {
     const h = harness();
     expect(h.registry.findByEvent(EXPENSE_REGISTERED)).toContain(h.worker);
+  });
+
+  it('retries the same FAILED InvoiceRequest through the configured PAE flow', async () => {
+    const h = harness();
+    await expect(h.worker.retry(ids.request)).resolves.toBe('STARTED');
+    expect(h.requests.tryRetryStart).toHaveBeenCalledWith(ids.workspace, ids.request, 'CONFIGURED_ADAPTER');
+    expect(h.adapter.buildInvoiceFlowInput).toHaveBeenCalledWith(expect.objectContaining({
+      documentNumber: 'ticket-number', totalAmount: '6893.12',
+    }));
+    expect(h.portalFlows.execute).toHaveBeenCalledOnce();
+  });
+
+  it('does not run a duplicate retry when the atomic claim is unavailable', async () => {
+    const h = harness();
+    (h.requests.tryRetryStart as ReturnType<typeof vi.fn>).mockResolvedValueOnce(null);
+    await expect(h.worker.retry(ids.request)).resolves.toBe('NOT_RETRYABLE');
+    expect(h.portalFlows.execute).not.toHaveBeenCalled();
   });
 });

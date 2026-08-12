@@ -2,7 +2,11 @@ import { EXPENSE_REGISTERED, type DomainEvent, type ExpenseRegisteredPayload, ty
 import { Injectable } from '@nestjs/common';
 import { InvoiceRequestStatus, TaxProfileStatus } from '@prisma/client';
 import { PrismaService } from '../prisma.service';
-import { PortalAdapterRegistry } from '../portal-automation/portal-adapter.registry';
+import {
+  PortalAdapterRegistry,
+  type AutomatedInvoicePortalAdapter,
+  type AutomatedInvoicePortalContext,
+} from '../portal-automation/portal-adapter.registry';
 import { PortalFlowService } from '../portal-automation/portal-flow.service';
 import { WorkerRegistry } from '../workers/worker-registry';
 import { InvoiceRequestsService } from './invoice-requests.service';
@@ -69,39 +73,93 @@ export class InvoiceAutomationWorker implements Worker {
 
     const started = await this.requests.tryStart(event.workspaceId, request.id, adapter.adapterKey);
     if (!started) return [];
+    await this.runStartedRequest(event.workspaceId, request.id, started.attempt.id, adapter, {
+      documentNumber: payload.documentNumber,
+      totalAmount: payload.originalAmount,
+      taxProfile,
+    });
+    return [];
+  }
+
+  async retry(invoiceRequestId: string): Promise<'STARTED' | 'NOT_RETRYABLE'> {
+    const request = await this.prisma.invoiceRequest.findUnique({
+      where: { id: invoiceRequestId },
+      include: { expense: true, taxProfile: true },
+    });
+    if (!request?.expense || !request.taxProfile || request.status !== InvoiceRequestStatus.FAILED) {
+      return 'NOT_RETRYABLE';
+    }
+    const adapter = this.adapters.findByMerchantKey(request.merchantKey);
+    if (!adapter) return 'NOT_RETRYABLE';
+    const documentNumber = await this.findOriginalDocumentNumber(request.workspaceId, request.expense);
+    if (!documentNumber) throw new Error('INVOICE_RETRY_DOCUMENT_NUMBER_UNAVAILABLE');
+    const started = await this.requests.tryRetryStart(request.workspaceId, request.id, adapter.adapterKey);
+    if (!started) return 'NOT_RETRYABLE';
+    await this.runStartedRequest(request.workspaceId, request.id, started.attempt.id, adapter, {
+      documentNumber,
+      totalAmount: request.expense.originalAmount.toString(),
+      taxProfile: request.taxProfile,
+    });
+    return 'STARTED';
+  }
+
+  private async findOriginalDocumentNumber(
+    workspaceId: string,
+    expense: { sourceEventId: string; sourceChannel: string | null; sourceConversationId: string | null },
+  ): Promise<string | undefined> {
+    const sessions = await this.prisma.conversationSession.findMany({
+      where: {
+        workspaceId,
+        ...(expense.sourceChannel ? { sourceChannel: expense.sourceChannel } : {}),
+        ...(expense.sourceConversationId ? { sourceConversationId: expense.sourceConversationId } : {}),
+        workerId: 'expense-assistant',
+      },
+      orderBy: { updatedAt: 'desc' },
+    });
+    for (const session of sessions) {
+      const context = session.contextJson as { sourceEventId?: unknown; draft?: { documentNumber?: unknown } };
+      if (context.sourceEventId !== expense.sourceEventId) continue;
+      const value = context.draft?.documentNumber;
+      if (typeof value === 'string' && value.trim()) return value.trim();
+    }
+    return undefined;
+  }
+
+  private async runStartedRequest(
+    workspaceId: string,
+    requestId: string,
+    attemptId: string,
+    adapter: AutomatedInvoicePortalAdapter,
+    context: AutomatedInvoicePortalContext,
+  ): Promise<void> {
     try {
-      const input = adapter.buildInvoiceFlowInput({
-        documentNumber: payload.documentNumber,
-        totalAmount: payload.originalAmount,
-        taxProfile,
-      });
+      const input = adapter.buildInvoiceFlowInput(context);
       const result = await this.portalFlows.execute(
-        event.workspaceId,
+        workspaceId,
         'INVOICE_REQUEST_AUTOMATION',
         adapter,
         input,
       );
       if (result.outcome === 'ACCEPTED_PENDING') {
-        await this.requests.markAcceptedPending(event.workspaceId, request.id, started.attempt.id);
+        await this.requests.markAcceptedPending(workspaceId, requestId, attemptId);
       } else if (result.outcome === 'REJECTED' || result.outcome === 'UNKNOWN_OUTCOME') {
         await this.requests.fail(
-          event.workspaceId,
-          request.id,
-          started.attempt.id,
+          workspaceId,
+          requestId,
+          attemptId,
           `PORTAL_${result.outcome}`,
           `Portal flow finished as ${result.outcome}`,
         );
       }
     } catch (error) {
       await this.requests.fail(
-        event.workspaceId,
-        request.id,
-        started.attempt.id,
+        workspaceId,
+        requestId,
+        attemptId,
         'PORTAL_FLOW_FAILED',
         error instanceof Error ? error.message : 'Portal flow failed',
       );
     }
-    return [];
   }
 }
 

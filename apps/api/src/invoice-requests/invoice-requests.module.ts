@@ -10,6 +10,6 @@ import { InvoiceAutomationWorker } from './invoice-automation.worker';
   imports: [WorkersModule, PortalAutomationModule],
   controllers: [InvoiceRequestsController],
   providers: [PrismaService, InvoiceRequestsService, InvoiceAutomationWorker],
-  exports: [InvoiceRequestsService],
+  exports: [InvoiceRequestsService, InvoiceAutomationWorker],
 })
 export class InvoiceRequestsModule {}

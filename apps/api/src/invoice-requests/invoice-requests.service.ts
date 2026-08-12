@@ -136,6 +136,29 @@ export class InvoiceRequestsService {
     });
   }
 
+  async tryRetryStart(workspaceId: string, requestId: string, adapterKey: string) {
+    const request = await this.scopedRequest(workspaceId, requestId);
+    if (request.status !== InvoiceRequestStatus.FAILED) return null;
+    return this.prisma.$transaction(async (tx) => {
+      const claimed = await tx.invoiceRequest.updateMany({
+        where: { id: requestId, workspaceId, status: InvoiceRequestStatus.FAILED },
+        data: { status: InvoiceRequestStatus.PROCESSING, failureReason: null },
+      });
+      if (claimed.count !== 1) return null;
+      const attemptNumber = await tx.invoiceRequestAttempt.count({ where: { invoiceRequestId: requestId } }) + 1;
+      const attempt = await tx.invoiceRequestAttempt.create({ data: {
+        invoiceRequestId: requestId, attemptNumber, adapterKey,
+        status: InvoiceRequestAttemptStatus.PROCESSING,
+      } });
+      await tx.auditEvent.create({ data: {
+        accountId: request.workspace.accountId, actorUserId: request.requestedByUserId,
+        action: INVOICE_AUDIT_ACTIONS.STARTED, entityType: 'InvoiceRequest', entityId: requestId,
+        metadata: { attemptId: attempt.id, attemptNumber, adapterKey, retry: true },
+      } });
+      return { request: { ...request, status: InvoiceRequestStatus.PROCESSING }, attempt };
+    });
+  }
+
   async markAcceptedPending(workspaceId: string, requestId: string, attemptId: string) {
     const request = await this.scopedRequest(workspaceId, requestId);
     return this.prisma.$transaction(async (tx) => {

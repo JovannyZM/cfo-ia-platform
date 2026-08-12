@@ -1,6 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-return */
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { existsSync } from 'node:fs';
 import { mkdir } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -352,6 +353,46 @@ export class PlaywrightBrowserProvider implements BrowserProvider {
       .filter(Boolean)
       .slice(0, 20));
   }
+}
+
+export async function runChromiumSmokeTest(): Promise<{
+  executableExists: boolean;
+  executablePath: string;
+  launched: boolean;
+  version?: string;
+  closed: boolean;
+  error?: string;
+}> {
+  const executablePath = chromium.executablePath();
+  const result: {
+    executableExists: boolean;
+    executablePath: string;
+    launched: boolean;
+    version?: string;
+    closed: boolean;
+    error?: string;
+  } = {
+    executableExists: existsSync(executablePath),
+    executablePath,
+    launched: false,
+    closed: false,
+  };
+
+  let browser: Browser | undefined;
+  try {
+    browser = await chromium.launch({ headless: true });
+    result.launched = true;
+    result.version = browser.version();
+    await browser.close();
+    result.closed = true;
+  } catch (error) {
+    result.error = error instanceof Error ? error.message : 'Chromium smoke test failed';
+    if (browser?.isConnected()) {
+      await browser.close().catch(() => undefined);
+    }
+  }
+
+  return result;
 }
 
 type ResponseEventSource = {
