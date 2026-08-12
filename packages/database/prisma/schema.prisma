@@ -120,6 +120,19 @@ enum InvoiceDocumentType {
   OTHER
 }
 
+enum InvoiceDeliveryStrategy {
+  IMMEDIATE
+  PORTAL_POLL
+  EMAIL_DELIVERY
+}
+
+enum InvoiceInboundMessageStatus {
+  RECEIVED
+  MATCHED
+  UNMATCHED
+  PROCESSED
+}
+
 enum MerchantInvoiceStrategyType {
   STANDARD_FORM
   CUSTOM_ADAPTER
@@ -293,6 +306,11 @@ model InvoiceRequest {
   failureReason     String?
   documentNumber    String?
   externalReference String?
+  deliveryStrategy  InvoiceDeliveryStrategy @default(IMMEDIATE)
+  deliveryEmail     String?
+  billingRfcSnapshot String?
+  requestedAmountSnapshot Decimal?           @db.Decimal(18, 6)
+  acceptedAt        DateTime?
   pendingSince       DateTime?
   nextCheckAt        DateTime?
   documentsDeadline DateTime?
@@ -304,6 +322,7 @@ model InvoiceRequest {
   requestedBy       User                    @relation(fields: [requestedByUserId], references: [id], onDelete: Restrict)
   attempts          InvoiceRequestAttempt[]
   documents         InvoiceDocument[]
+  inboundMessages   InvoiceInboundMessage[]
   supplementalEvidence SupplementalExpenseEvidence[]
   temporaryEvidence TemporaryEvidenceObject[]
   createdAt         DateTime                @default(now())
@@ -316,6 +335,27 @@ model InvoiceRequest {
   @@index([taxProfileId, status])
   @@index([requestedByUserId, createdAt])
   @@index([status, nextCheckAt])
+}
+
+model InvoiceInboundMessage {
+  id                String                      @id @default(uuid()) @db.Uuid
+  provider          String
+  providerMessageId String
+  senderAddress     String
+  recipientAddress  String?
+  subjectHash       String
+  bodyHash          String?
+  receivedAt        DateTime
+  status            InvoiceInboundMessageStatus @default(RECEIVED)
+  invoiceRequestId  String?                     @db.Uuid
+  correlation       Json?
+  invoiceRequest    InvoiceRequest?             @relation(fields: [invoiceRequestId], references: [id], onDelete: Restrict)
+  createdAt         DateTime                     @default(now())
+  updatedAt         DateTime                     @updatedAt
+
+  @@unique([provider, providerMessageId])
+  @@index([invoiceRequestId, status])
+  @@index([recipientAddress, receivedAt])
 }
 
 model InvoiceRequestAttempt {

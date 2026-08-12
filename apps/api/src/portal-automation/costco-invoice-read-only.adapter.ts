@@ -139,7 +139,14 @@ export class CostcoInvoiceReadOnlyAdapter implements PortalActionAdapter<'CONTIN
   }
 
   getPendingDocumentPolicy() {
-    return { windowMs: 72 * 60 * 60 * 1000, initialBackoffMs: 30 * 60 * 1000, maxBackoffMs: 12 * 60 * 60 * 1000, maxChecks: 12 };
+    return {
+      strategy: 'EMAIL_DELIVERY' as const,
+      windowMs: 72 * 60 * 60 * 1000,
+      initialBackoffMs: 30 * 60 * 1000,
+      maxBackoffMs: 12 * 60 * 60 * 1000,
+      maxChecks: 12,
+      expectedDocumentTypes: ['XML', 'PDF'] as const,
+    };
   }
 
   resolveActionOutcome(stageKey: string, observation: PortalActionObservation): PortalFlowOutcome | undefined {

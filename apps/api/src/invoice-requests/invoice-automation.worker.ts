@@ -170,7 +170,11 @@ export class InvoiceAutomationWorker implements Worker {
         const persisted = await this.downloads.persist({ workspaceId, invoiceRequestId: requestId, attemptId, documents: capturedDocuments });
         await this.requests.completeWithPersistedDocuments(workspaceId, requestId, attemptId, persisted.map(({ id }) => id));
       } else if (result.outcome === 'ACCEPTED_PENDING') {
-        await this.pendingDocuments.schedule(workspaceId, requestId, attemptId, adapter.adapterKey);
+        await this.pendingDocuments.schedule(workspaceId, requestId, attemptId, adapter.adapterKey, extractExternalReference(result.stages), {
+          ...(context.taxProfile.billingEmail ? { email: context.taxProfile.billingEmail } : {}),
+          rfc: context.taxProfile.rfc,
+          amount: context.totalAmount,
+        });
       } else if (result.outcome === 'ALREADY_COMPLETED') {
         await this.requests.markAlreadyCompleted(workspaceId, requestId, attemptId);
       } else if (result.outcome === 'REJECTED' || result.outcome === 'UNKNOWN_OUTCOME') {
@@ -192,6 +196,18 @@ export class InvoiceAutomationWorker implements Worker {
       );
     }
   }
+}
+
+function extractExternalReference(stages: readonly { responseSummary?: unknown }[]): string | undefined {
+  for (const stage of [...stages].reverse()) {
+    if (!stage.responseSummary || typeof stage.responseSummary !== 'object') continue;
+    const record = stage.responseSummary as Record<string, unknown>;
+    for (const key of ['externalReference', 'reference', 'folio', 'requestId', 'trackingId']) {
+      const value = record[key];
+      if ((typeof value === 'string' || typeof value === 'number') && String(value).trim()) return String(value).trim();
+    }
+  }
+  return undefined;
 }
 
 function parseDocumentIdentifiers(value: unknown): NonNullable<AutomatedInvoicePortalContext['documentIdentifiers']> {

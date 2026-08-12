@@ -45,6 +45,7 @@ export type PortalStageExecution = {
   actionResolution: ActionLocatorResult;
   transitionEvidence: StageTransitionEvidence;
   documents: readonly CapturedPortalDocument[];
+  responseSummary?: unknown;
 };
 
 export type PortalFlowResult = {
@@ -93,7 +94,10 @@ export class PortalStageFlowEngine {
       }
       if (!observation.transitionEvidence) throw new PortalActionObservationError(observation);
       const transitionEvidence = observation.transitionEvidence;
-      executions.push({ stageKey: stage.key, actionResolution, transitionEvidence, documents: observation.documents ?? [] });
+      executions.push({
+        stageKey: stage.key, actionResolution, transitionEvidence, documents: observation.documents ?? [],
+        ...(observation.request.responseSummary !== undefined ? { responseSummary: observation.request.responseSummary } : {}),
+      });
       outcome = adapter.resolveOutcome(stage.key, transitionEvidence) ?? outcome;
     }
 

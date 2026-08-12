@@ -89,7 +89,10 @@ describe('InvoiceAutomationWorker', () => {
     }));
     expect(h.requests.tryStart).toHaveBeenCalledWith(ids.workspace, ids.request, 'CONFIGURED_ADAPTER');
     expect(h.portalFlows.execute).toHaveBeenCalledOnce();
-    expect(h.pendingDocuments.schedule).toHaveBeenCalledWith(ids.workspace, ids.request, ids.attempt, 'CONFIGURED_ADAPTER');
+    expect(h.pendingDocuments.schedule).toHaveBeenCalledWith(
+      ids.workspace, ids.request, ids.attempt, 'CONFIGURED_ADAPTER', undefined,
+      { email: 'billing@example.com', rfc: 'RFC', amount: '6893.12' },
+    );
   });
 
   it('does not start PAE again when the idempotent request already progressed', async () => {

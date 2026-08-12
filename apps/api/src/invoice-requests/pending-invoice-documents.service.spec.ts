@@ -11,7 +11,7 @@ function harness(overrides: Record<string, unknown> = {}) {
     ...overrides,
   };
   const prisma: any = { invoiceRequest: { findUnique: vi.fn().mockResolvedValue(request), findMany: vi.fn().mockResolvedValue([request]) } };
-  const adapter = { getPendingDocumentPolicy: () => ({ windowMs: 72 * 3_600_000, initialBackoffMs: 1000, maxBackoffMs: 10_000, maxChecks: 12 }) };
+  const adapter = { getPendingDocumentPolicy: () => ({ strategy: 'PORTAL_POLL', windowMs: 72 * 3_600_000, initialBackoffMs: 1000, maxBackoffMs: 10_000, maxChecks: 12 }) };
   const adapters: any = { findByAdapterKey: vi.fn().mockReturnValue(adapter) };
   const downloads: any = { persist: vi.fn().mockResolvedValue([{ id: 'document' }]) };
   const requests: any = { markAcceptedPending: vi.fn(), markDocumentsTimeout: vi.fn(), reschedulePending: vi.fn(), completeWithPersistedDocuments: vi.fn() };
@@ -40,5 +40,13 @@ describe('PendingInvoiceDocumentsService', () => {
     const h = harness({ documentsDeadline: new Date(Date.now() - 1) });
     await expect(h.service.checkOne('request')).resolves.toBe('TIMEOUT');
     expect(h.requests.markDocumentsTimeout).toHaveBeenCalledWith('workspace', 'request');
+  });
+
+  it('does not poll the portal while an email-delivery request is awaiting documents', async () => {
+    const h = harness({ deliveryStrategy: 'EMAIL_DELIVERY' });
+    h.service.registerResolver('COSTCO', vi.fn());
+    await expect(h.service.checkOne('request')).resolves.toBe('PENDING');
+    expect(h.downloads.persist).not.toHaveBeenCalled();
+    expect(h.requests.reschedulePending).not.toHaveBeenCalled();
   });
 });

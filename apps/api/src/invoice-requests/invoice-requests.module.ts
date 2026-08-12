@@ -7,11 +7,12 @@ import { PortalAutomationModule } from '../portal-automation/portal-automation.m
 import { InvoiceAutomationWorker } from './invoice-automation.worker';
 import { InvoiceDownloadManagerService } from './invoice-download-manager.service';
 import { PendingInvoiceDocumentsService } from './pending-invoice-documents.service';
+import { InboundInvoiceEmailService } from './inbound-invoice-email.service';
 
 @Module({
   imports: [WorkersModule, PortalAutomationModule],
   controllers: [InvoiceRequestsController],
-  providers: [PrismaService, InvoiceRequestsService, InvoiceDownloadManagerService, PendingInvoiceDocumentsService, InvoiceAutomationWorker],
-  exports: [InvoiceRequestsService, InvoiceDownloadManagerService, PendingInvoiceDocumentsService, InvoiceAutomationWorker],
+  providers: [PrismaService, InvoiceRequestsService, InvoiceDownloadManagerService, PendingInvoiceDocumentsService, InboundInvoiceEmailService, InvoiceAutomationWorker],
+  exports: [InvoiceRequestsService, InvoiceDownloadManagerService, PendingInvoiceDocumentsService, InboundInvoiceEmailService, InvoiceAutomationWorker],
 })
 export class InvoiceRequestsModule {}

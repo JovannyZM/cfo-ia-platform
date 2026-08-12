@@ -35,14 +35,26 @@ export class PendingInvoiceDocumentsService implements OnModuleInit, OnModuleDes
     this.resolvers.set(adapterKey, resolver);
   }
 
-  async schedule(workspaceId: string, requestId: string, attemptId: string, adapterKey: string, externalReference?: string) {
+  async schedule(
+    workspaceId: string, requestId: string, attemptId: string, adapterKey: string,
+    externalReference?: string,
+    correlation?: { email?: string; rfc?: string; amount?: string },
+  ) {
     const policy = this.adapters.findByAdapterKey(adapterKey)?.getPendingDocumentPolicy?.() ?? defaultPolicy();
-    return this.requests.markAcceptedPending(workspaceId, requestId, attemptId, policy, externalReference);
+    return this.requests.markAcceptedPending(workspaceId, requestId, attemptId, policy, externalReference, {
+      strategy: policy.strategy ?? 'PORTAL_POLL', ...correlation,
+    });
   }
 
   async runDue(now = new Date()): Promise<number> {
     const due = await this.prisma.invoiceRequest.findMany({
-      where: { status: InvoiceRequestStatus.ACCEPTED_PENDING, nextCheckAt: { lte: now } },
+      where: {
+        status: InvoiceRequestStatus.ACCEPTED_PENDING,
+        OR: [
+          { deliveryStrategy: 'PORTAL_POLL', nextCheckAt: { lte: now } },
+          { deliveryStrategy: 'EMAIL_DELIVERY', documentsDeadline: { lte: now } },
+        ],
+      },
       take: 25,
     });
     for (const request of due) await this.checkOne(request.id, now);
@@ -58,6 +70,7 @@ export class PendingInvoiceDocumentsService implements OnModuleInit, OnModuleDes
       await this.requests.markDocumentsTimeout(request.workspaceId, request.id);
       return 'TIMEOUT';
     }
+    if (request.deliveryStrategy === 'EMAIL_DELIVERY') return 'PENDING';
     const attempt = request.attempts[0];
     if (!attempt) return 'PENDING';
     const result = await (this.resolvers.get(attempt.adapterKey)?.(request.id) ?? Promise.resolve({ documents: [] }));

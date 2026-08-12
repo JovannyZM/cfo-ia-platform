@@ -21,10 +21,12 @@ export type AutomatedInvoicePortalContext = {
 };
 
 export type PendingDocumentPolicy = {
+  strategy?: 'PORTAL_POLL' | 'EMAIL_DELIVERY';
   windowMs: number;
   initialBackoffMs: number;
   maxBackoffMs: number;
   maxChecks: number;
+  expectedDocumentTypes?: readonly ('XML' | 'PDF')[];
 };
 
 export interface AutomatedInvoicePortalAdapter extends StagedPortalAdapter<string> {

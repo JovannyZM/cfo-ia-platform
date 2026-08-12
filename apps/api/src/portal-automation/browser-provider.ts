@@ -87,7 +87,7 @@ export type CapturedPortalDocument = {
   fileName: string;
   mimeType: string;
   bytes: Uint8Array;
-  source: 'PLAYWRIGHT_DOWNLOAD' | 'HTTP_RESPONSE';
+  source: 'PLAYWRIGHT_DOWNLOAD' | 'HTTP_RESPONSE' | 'EMAIL_ATTACHMENT';
   sourceUrl?: string;
 };
 

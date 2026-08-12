@@ -274,6 +274,7 @@ export class InvoiceRequestsService {
     workspaceId: string, requestId: string, attemptId: string,
     policy: PendingDocumentPolicy = { windowMs: 72 * 60 * 60 * 1000, initialBackoffMs: 30 * 60 * 1000, maxBackoffMs: 12 * 60 * 60 * 1000, maxChecks: 12 },
     externalReference?: string,
+    delivery?: { strategy: 'PORTAL_POLL' | 'EMAIL_DELIVERY'; email?: string; rfc?: string; amount?: string },
   ) {
     const request = await this.scopedRequest(workspaceId, requestId);
     const now = new Date();
@@ -283,8 +284,15 @@ export class InvoiceRequestsService {
       } });
       const updated = await tx.invoiceRequest.update({ where: { id: requestId }, data: {
         status: InvoiceRequestStatus.ACCEPTED_PENDING, failureReason: null,
-        pendingSince: now, nextCheckAt: new Date(now.getTime() + policy.initialBackoffMs),
+        pendingSince: now, acceptedAt: now,
+        nextCheckAt: delivery?.strategy === 'EMAIL_DELIVERY' ? null : new Date(now.getTime() + policy.initialBackoffMs),
         documentsDeadline: new Date(now.getTime() + policy.windowMs), maxPendingChecks: policy.maxChecks,
+        ...(delivery ? {
+          deliveryStrategy: delivery.strategy,
+          deliveryEmail: delivery.email,
+          billingRfcSnapshot: delivery.rfc,
+          requestedAmountSnapshot: delivery.amount,
+        } : {}),
         ...(externalReference ? { externalReference } : {}),
       } });
       await tx.auditEvent.create({ data: {

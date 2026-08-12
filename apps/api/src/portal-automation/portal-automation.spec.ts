@@ -60,6 +60,12 @@ function harness(input: {
 }
 
 describe('Portal Automation Engine Costco probe', () => {
+  it('declares email delivery with a 72-hour window and both expected CFDI documents', () => {
+    expect(new CostcoInvoiceReadOnlyAdapter().getPendingDocumentPolicy()).toMatchObject({
+      strategy: 'EMAIL_DELIVERY', windowMs: 72 * 60 * 60 * 1000,
+      expectedDocumentTypes: ['XML', 'PDF'],
+    });
+  });
   it('allows Costco HTTPS domains and blocks other domains or protocols', () => {
     expect(isAllowedPortalUrl('https://www3.costco.com.mx/facturacion', ['costco.com.mx'])).toBe(true);
     expect(isAllowedPortalUrl('https://evil.example/facturacion', ['costco.com.mx'])).toBe(false);
