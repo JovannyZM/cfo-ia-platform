@@ -160,6 +160,14 @@ describe('Costco staged adapter', () => {
     expect(() => costco.validatePreflight(context)).toThrowError(/COSTCO_COMPROBANTE_INVALID/);
   });
 
+  it('does not accept an untyped 20 digit document number as a silent BARCODE fallback', () => {
+    const costco = new CostcoInvoiceReadOnlyAdapter();
+    expect(costco.resolveDocumentNumber({
+      documentNumber: '71901102120708261246', totalAmount: '1383.26', taxProfile: completeProfile,
+      documentIdentifiers: [{ type: 'TICKET_NUMBER', value: '71901102120708261246' }],
+    })).toBeUndefined();
+  });
+
   it('classifies Costco business code 447 as already completed', () => {
     const costco = new CostcoInvoiceReadOnlyAdapter();
     expect(costco.resolveActionOutcome('IDENTIFY_PURCHASE', {
@@ -171,7 +179,10 @@ describe('Costco staged adapter', () => {
 
   it('accepts a complete Costco preflight and maps all stage-two fiscal fields', () => {
     const costco = new CostcoInvoiceReadOnlyAdapter();
-    const context = { documentNumber: '71901102120708261246', totalAmount: '1383.26', taxProfile: completeProfile };
+    const context = {
+      documentNumber: '71901102120708261246', totalAmount: '1383.26', taxProfile: completeProfile,
+      documentIdentifiers: [{ type: 'BARCODE' as const, value: '71901102120708261246' }],
+    };
     expect(() => costco.validatePreflight(context)).not.toThrow();
     expect(costco.buildInvoiceFlowInput(context)).toEqual({
       ticketOrOrder: '71901102120708261246', totalPaid: '1383.26', rfc: 'BELE880510NG3',

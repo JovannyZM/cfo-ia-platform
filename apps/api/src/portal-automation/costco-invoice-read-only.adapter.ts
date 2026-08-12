@@ -193,9 +193,7 @@ export class CostcoInvoiceReadOnlyAdapter implements PortalActionAdapter<'CONTIN
   resolveDocumentNumber(context: AutomatedInvoicePortalContext): string | undefined {
     const barcode = context.documentIdentifiers?.find((identifier) =>
       identifier.type === 'BARCODE' && /^\d{20}$/u.test(identifier.value.trim()));
-    if (barcode) return barcode.value.trim();
-    const fallback = context.documentNumber.trim();
-    return /^\d{20}$/u.test(fallback) ? fallback : undefined;
+    return barcode?.value.trim();
   }
 
   validatePreflight(context: AutomatedInvoicePortalContext): void {
