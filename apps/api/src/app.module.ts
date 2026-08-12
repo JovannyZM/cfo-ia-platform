@@ -20,6 +20,7 @@ import { InvoiceRequestsModule } from './invoice-requests/invoice-requests.modul
 import { PortalAutomationModule } from './portal-automation/portal-automation.module';
 import { TaxProfilesModule } from './tax-profiles/tax-profiles.module';
 import { PrismaService } from './prisma.service';
+import { StorageModule } from './storage/storage.module';
 
 @Module({
   imports: [
@@ -28,6 +29,7 @@ import { PrismaService } from './prisma.service';
       ignoreEnvFile: process.env.NODE_ENV === 'production',
       envFilePath: resolve(__dirname, '../../../.env'),
     }),
+    StorageModule,
     BrainModule,
     BudgetsModule,
     ExpenseAnalysisModule,

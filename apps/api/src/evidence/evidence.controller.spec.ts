@@ -56,7 +56,9 @@ function controllerForResult(
   const findUnique = vi.fn().mockResolvedValue(existingFingerprint);
   const prisma = { expense: { findUnique } } as unknown as PrismaService;
   return {
-    controller: new EvidenceController(eventBus, sessions, prisma, pdfProcessor),
+    controller: new EvidenceController(eventBus, sessions, prisma, {
+      store: vi.fn().mockResolvedValue({}), linkExpense: vi.fn().mockResolvedValue(undefined),
+    } as never, pdfProcessor),
     publish,
     start,
     findUnique,

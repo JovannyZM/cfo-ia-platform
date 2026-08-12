@@ -100,8 +100,10 @@ enum InvoiceRequestStatus {
   NEEDS_TAX_DATA
   READY
   PROCESSING
+  ACCEPTED_PENDING
   COMPLETED
   ALREADY_INVOICED
+  DOCUMENTS_TIMEOUT
   FAILED
   CANCELLED
 }
@@ -115,6 +117,7 @@ enum InvoiceRequestAttemptStatus {
 enum InvoiceDocumentType {
   XML
   PDF
+  OTHER
 }
 
 enum MerchantInvoiceStrategyType {
@@ -182,6 +185,7 @@ model Workspace {
   dailyCloseDeliveries     DailyCloseDelivery[]
   invoiceRequests          InvoiceRequest[]
   supplementalExpenseEvidence SupplementalExpenseEvidence[]
+  temporaryEvidenceObjects TemporaryEvidenceObject[]
   portalSessions           PortalSession[]
   taxProfiles              TaxProfile[]
   createdAt                DateTime                  @default(now())
@@ -288,6 +292,12 @@ model InvoiceRequest {
   requestedByUserId String                  @db.Uuid
   failureReason     String?
   documentNumber    String?
+  externalReference String?
+  pendingSince       DateTime?
+  nextCheckAt        DateTime?
+  documentsDeadline DateTime?
+  pendingCheckCount Int                     @default(0)
+  maxPendingChecks  Int                     @default(12)
   workspace         Workspace               @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
   expense           Expense?                @relation(fields: [expenseId], references: [id], onDelete: Restrict)
   taxProfile        TaxProfile?             @relation(fields: [taxProfileId], references: [id], onDelete: Restrict)
@@ -295,6 +305,7 @@ model InvoiceRequest {
   attempts          InvoiceRequestAttempt[]
   documents         InvoiceDocument[]
   supplementalEvidence SupplementalExpenseEvidence[]
+  temporaryEvidence TemporaryEvidenceObject[]
   createdAt         DateTime                @default(now())
   updatedAt         DateTime                @updatedAt
   completedAt       DateTime?
@@ -304,6 +315,7 @@ model InvoiceRequest {
   @@index([workspaceId, status, createdAt])
   @@index([taxProfileId, status])
   @@index([requestedByUserId, createdAt])
+  @@index([status, nextCheckAt])
 }
 
 model InvoiceRequestAttempt {
@@ -318,6 +330,7 @@ model InvoiceRequestAttempt {
   errorMessage     String?
   invoiceRequest   InvoiceRequest              @relation(fields: [invoiceRequestId], references: [id], onDelete: Restrict)
   actionObservations PortalActionObservation[]
+  documents        InvoiceDocument[]
   createdAt        DateTime                    @default(now())
 
   @@unique([invoiceRequestId, attemptNumber])
@@ -363,15 +376,45 @@ model PortalActionObservation {
 model InvoiceDocument {
   id               String              @id @default(uuid()) @db.Uuid
   invoiceRequestId String              @db.Uuid
+  attemptId        String?             @db.Uuid
   documentType     InvoiceDocumentType
   fileName         String
+  mimeType         String              @default("application/octet-stream")
+  sizeBytes        Int                 @default(0)
   storageReference String
   checksum         String              @db.Char(64)
   invoiceRequest   InvoiceRequest      @relation(fields: [invoiceRequestId], references: [id], onDelete: Restrict)
+  attempt          InvoiceRequestAttempt? @relation(fields: [attemptId], references: [id], onDelete: Restrict)
   createdAt        DateTime            @default(now())
 
   @@unique([invoiceRequestId, documentType])
+  @@unique([invoiceRequestId, checksum])
   @@index([checksum])
+  @@index([attemptId])
+}
+
+model TemporaryEvidenceObject {
+  id               String          @id @default(uuid()) @db.Uuid
+  workspaceId      String          @db.Uuid
+  expenseId        String?         @db.Uuid
+  invoiceRequestId String?         @db.Uuid
+  sourceEventId    String          @unique @db.Uuid
+  sha256           String          @db.Char(64)
+  mimeType         String
+  sizeBytes        Int
+  storageReference String          @unique
+  expiresAt        DateTime
+  deletedAt        DateTime?
+  workspace        Workspace       @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  expense          Expense?        @relation(fields: [expenseId], references: [id], onDelete: Restrict)
+  invoiceRequest   InvoiceRequest? @relation(fields: [invoiceRequestId], references: [id], onDelete: Restrict)
+  createdAt        DateTime        @default(now())
+  updatedAt        DateTime        @updatedAt
+
+  @@unique([workspaceId, sha256])
+  @@index([expiresAt, deletedAt])
+  @@index([expenseId])
+  @@index([invoiceRequestId])
 }
 
 model MerchantInvoiceProfile {
@@ -459,6 +502,7 @@ model Expense {
   budgetAssignment     ExpenseBudgetAssignment?
   invoiceRequests      InvoiceRequest[]
   supplementalEvidence SupplementalExpenseEvidence[]
+  temporaryEvidence    TemporaryEvidenceObject[]
   createdAt            DateTime                 @default(now())
   updatedAt            DateTime                 @updatedAt
 

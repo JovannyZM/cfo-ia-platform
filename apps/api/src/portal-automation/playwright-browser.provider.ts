@@ -4,7 +4,7 @@ import { ConfigService } from '@nestjs/config';
 import { mkdir } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { chromium, type Browser, type BrowserContext, type ConsoleMessage, type Page, type Request, type Response } from 'playwright';
+import { chromium, type Browser, type BrowserContext, type ConsoleMessage, type Download, type Page, type Request, type Response } from 'playwright';
 import {
   type BrowserProvider,
   type ActionLocatorDescriptor,
@@ -25,6 +25,7 @@ import {
   type PortalActionSnapshot,
   type PortalFieldState,
   type PortalNetworkActivity,
+  type CapturedPortalDocument,
   isAllowedPortalUrl,
 } from './browser-provider';
 
@@ -309,6 +310,7 @@ export class PlaywrightBrowserProvider implements BrowserProvider {
     let expectedResponse: Response | undefined;
     let requestStartedAt: number | undefined;
     let responseReceivedAt: number | undefined;
+    const capturedDocumentPromises: Promise<CapturedPortalDocument | undefined>[] = [];
 
     const matchesExpected = (method: string, rawUrl: string) => input.expectedRequest
       ? method.toUpperCase() === input.expectedRequest.method.toUpperCase()
@@ -336,6 +338,13 @@ export class PlaywrightBrowserProvider implements BrowserProvider {
         expectedResponse = response;
         responseReceivedAt = Date.now();
       }
+      const mimeType = response.headers()['content-type']?.split(';')[0]?.trim().toLowerCase();
+      if (mimeType && isDocumentMimeType(mimeType)) {
+        capturedDocumentPromises.push(captureResponseDocument(response, mimeType));
+      }
+    };
+    const onDownload = (download: Download) => {
+      capturedDocumentPromises.push(captureDownloadDocument(download));
     };
     const onRequestFailed = (request: Request) => {
       if (matchesExpected(request.method(), request.url())) {
@@ -354,6 +363,7 @@ export class PlaywrightBrowserProvider implements BrowserProvider {
     page.on('requestfailed', onRequestFailed);
     page.on('pageerror', onPageError);
     page.on('console', onConsole);
+    page.on('download', onDownload);
 
     try {
       await installActionEventProbe(page, input.form, input.action);
@@ -410,6 +420,9 @@ export class PlaywrightBrowserProvider implements BrowserProvider {
       }
       const resolvedScreenshot = await captureRedactedScreenshot(page);
       const responseDetails = expectedResponse ? await summarizeResponse(expectedResponse) : {};
+      const documents = (await Promise.all(capturedDocumentPromises)).filter(
+        (document): document is CapturedPortalDocument => Boolean(document),
+      );
       return {
         stageKey: input.stageKey,
         actionKey: input.actionKey,
@@ -446,6 +459,7 @@ export class PlaywrightBrowserProvider implements BrowserProvider {
           resolved: resolvedScreenshot,
           mimeType: 'image/png',
         },
+        documents,
       };
     } finally {
       await removeActionEventProbe(page).catch(() => undefined);
@@ -454,6 +468,7 @@ export class PlaywrightBrowserProvider implements BrowserProvider {
       page.off('requestfailed', onRequestFailed);
       page.off('pageerror', onPageError);
       page.off('console', onConsole);
+      page.off('download', onDownload);
     }
   }
 
@@ -904,6 +919,43 @@ export function observeHttpResponse(
 
 function normalizeActionText(value: string | null): string {
   return (value ?? '').replace(/[\uE000-\uF8FF]/g, '').replace(/\s+/g, ' ').trim();
+}
+
+function isDocumentMimeType(mimeType: string): boolean {
+  return mimeType === 'application/pdf' || mimeType === 'application/xml' || mimeType === 'text/xml';
+}
+
+async function captureResponseDocument(response: Response, mimeType: string): Promise<CapturedPortalDocument | undefined> {
+  try {
+    const bytes = await response.body();
+    if (bytes.byteLength === 0) return undefined;
+    const pathname = new URL(response.url()).pathname;
+    const fileName = pathname.split('/').filter(Boolean).at(-1) ?? (mimeType === 'application/pdf' ? 'invoice.pdf' : 'invoice.xml');
+    return { fileName, mimeType, bytes, source: 'HTTP_RESPONSE', sourceUrl: sanitizeDiagnosticUrl(response.url()) };
+  } catch {
+    return undefined;
+  }
+}
+
+async function captureDownloadDocument(download: Download): Promise<CapturedPortalDocument | undefined> {
+  try {
+    const stream = await download.createReadStream();
+    if (!stream) return undefined;
+    const chunks: Buffer[] = [];
+    for await (const chunk of stream) chunks.push(Buffer.isBuffer(chunk) ? Buffer.from(chunk) : Buffer.from(String(chunk)));
+    const bytes = Buffer.concat(chunks);
+    const fileName = download.suggestedFilename();
+    return {
+      fileName,
+      mimeType: fileName.toLowerCase().endsWith('.pdf') ? 'application/pdf'
+        : fileName.toLowerCase().endsWith('.xml') ? 'application/xml' : 'application/octet-stream',
+      bytes,
+      source: 'PLAYWRIGHT_DOWNLOAD',
+      sourceUrl: sanitizeDiagnosticUrl(download.url()),
+    };
+  } catch {
+    return undefined;
+  }
 }
 
 function escapeAttribute(value: string): string {

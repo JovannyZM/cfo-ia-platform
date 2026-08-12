@@ -9,6 +9,7 @@ import { ExpenseInterpreterWorker } from './expense-interpreter.worker';
 import { OpenAIExpenseEvidenceInterpreter } from './openai-expense-evidence-interpreter';
 import { ConversationsModule } from '../conversations/conversations.module';
 import { InMemoryPdfEvidenceProcessor, PDF_EVIDENCE_PROCESSOR } from './pdf-evidence-processor';
+import { TemporaryEvidenceService } from './temporary-evidence.service';
 
 @Module({
   imports: [WorkersModule, ConversationsModule],
@@ -17,6 +18,7 @@ import { InMemoryPdfEvidenceProcessor, PDF_EVIDENCE_PROCESSOR } from './pdf-evid
     ExpenseInterpreterWorker,
     OpenAIExpenseEvidenceInterpreter,
     InMemoryPdfEvidenceProcessor,
+    TemporaryEvidenceService,
     {
       provide: PDF_EVIDENCE_PROCESSOR,
       useExisting: InMemoryPdfEvidenceProcessor,

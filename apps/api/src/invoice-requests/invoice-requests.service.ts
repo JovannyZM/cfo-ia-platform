@@ -14,6 +14,7 @@ import {
   type CreateInvoiceRequestInput,
   type InvoiceCompletionInput,
 } from './invoice-request.schemas';
+import type { PendingDocumentPolicy } from '../portal-automation/portal-adapter.registry';
 
 export const INVOICE_AUDIT_ACTIONS = {
   CREATED: 'INVOICE_REQUEST_CREATED',
@@ -269,19 +270,63 @@ export class InvoiceRequestsService {
     });
   }
 
-  async markAcceptedPending(workspaceId: string, requestId: string, attemptId: string) {
+  async markAcceptedPending(
+    workspaceId: string, requestId: string, attemptId: string,
+    policy: PendingDocumentPolicy = { windowMs: 72 * 60 * 60 * 1000, initialBackoffMs: 30 * 60 * 1000, maxBackoffMs: 12 * 60 * 60 * 1000, maxChecks: 12 },
+    externalReference?: string,
+  ) {
     const request = await this.scopedRequest(workspaceId, requestId);
+    const now = new Date();
     return this.prisma.$transaction(async (tx) => {
       await tx.invoiceRequestAttempt.update({ where: { id: attemptId }, data: {
         status: InvoiceRequestAttemptStatus.COMPLETED, finishedAt: new Date(),
       } });
       const updated = await tx.invoiceRequest.update({ where: { id: requestId }, data: {
-        status: InvoiceRequestStatus.PROCESSING, failureReason: null,
+        status: InvoiceRequestStatus.ACCEPTED_PENDING, failureReason: null,
+        pendingSince: now, nextCheckAt: new Date(now.getTime() + policy.initialBackoffMs),
+        documentsDeadline: new Date(now.getTime() + policy.windowMs), maxPendingChecks: policy.maxChecks,
+        ...(externalReference ? { externalReference } : {}),
       } });
       await tx.auditEvent.create({ data: {
         accountId: request.workspace.accountId, actorUserId: request.requestedByUserId,
         action: 'INVOICE_REQUEST_ACCEPTED_PENDING', entityType: 'InvoiceRequest', entityId: requestId,
         metadata: { attemptId },
+      } });
+      return updated;
+    });
+  }
+
+  async reschedulePending(workspaceId: string, requestId: string, policy: PendingDocumentPolicy, now: Date) {
+    const request = await this.scopedRequest(workspaceId, requestId);
+    if (request.status !== InvoiceRequestStatus.ACCEPTED_PENDING) return request;
+    const nextCount = request.pendingCheckCount + 1;
+    if (nextCount >= request.maxPendingChecks) return this.markDocumentsTimeout(workspaceId, requestId);
+    const delay = Math.min(policy.initialBackoffMs * 2 ** nextCount, policy.maxBackoffMs);
+    return this.prisma.invoiceRequest.update({
+      where: { id: requestId }, data: { pendingCheckCount: nextCount, nextCheckAt: new Date(now.getTime() + delay) },
+    });
+  }
+
+  async markDocumentsTimeout(workspaceId: string, requestId: string) {
+    const request = await this.scopedRequest(workspaceId, requestId);
+    if (request.status !== InvoiceRequestStatus.ACCEPTED_PENDING) return request;
+    return this.prisma.invoiceRequest.update({
+      where: { id: requestId },
+      data: { status: InvoiceRequestStatus.DOCUMENTS_TIMEOUT, nextCheckAt: null, failureReason: 'DOCUMENTS_TIMEOUT' },
+    });
+  }
+
+  async completeWithPersistedDocuments(workspaceId: string, requestId: string, attemptId: string, documentIds: string[]) {
+    const request = await this.scopedRequest(workspaceId, requestId);
+    if (request.status !== InvoiceRequestStatus.ACCEPTED_PENDING && request.status !== InvoiceRequestStatus.PROCESSING) return request;
+    return this.prisma.$transaction(async (tx) => {
+      const updated = await tx.invoiceRequest.update({ where: { id: requestId }, data: {
+        status: InvoiceRequestStatus.COMPLETED, completedAt: new Date(), nextCheckAt: null, failureReason: null,
+      } });
+      await tx.auditEvent.create({ data: {
+        accountId: request.workspace.accountId, actorUserId: request.requestedByUserId,
+        action: INVOICE_AUDIT_ACTIONS.COMPLETED, entityType: 'InvoiceRequest', entityId: requestId,
+        metadata: { attemptId, documentIds },
       } });
       return updated;
     });

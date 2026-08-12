@@ -10,6 +10,7 @@ import type {
   StageTransitionEvidence,
   ExpectedActionRequest,
   PortalActionObservation,
+  CapturedPortalDocument,
 } from './browser-provider';
 
 export type PortalFlowOutcome = 'COMPLETED' | 'ACCEPTED_PENDING' | 'ALREADY_COMPLETED' | 'REJECTED' | 'UNKNOWN_OUTCOME';
@@ -43,6 +44,7 @@ export type PortalStageExecution = {
   stageKey: string;
   actionResolution: ActionLocatorResult;
   transitionEvidence: StageTransitionEvidence;
+  documents: readonly CapturedPortalDocument[];
 };
 
 export type PortalFlowResult = {
@@ -91,7 +93,7 @@ export class PortalStageFlowEngine {
       }
       if (!observation.transitionEvidence) throw new PortalActionObservationError(observation);
       const transitionEvidence = observation.transitionEvidence;
-      executions.push({ stageKey: stage.key, actionResolution, transitionEvidence });
+      executions.push({ stageKey: stage.key, actionResolution, transitionEvidence, documents: observation.documents ?? [] });
       outcome = adapter.resolveOutcome(stage.key, transitionEvidence) ?? outcome;
     }
 

@@ -83,6 +83,14 @@ export type PortalNetworkActivity = {
   responseSummary?: unknown;
 };
 
+export type CapturedPortalDocument = {
+  fileName: string;
+  mimeType: string;
+  bytes: Uint8Array;
+  source: 'PLAYWRIGHT_DOWNLOAD' | 'HTTP_RESPONSE';
+  sourceUrl?: string;
+};
+
 export type StageTransitionDescriptor = {
   visibleFields?: readonly Pick<FieldInteractionDescriptor, 'css' | 'label' | 'name'>[];
   visibleText?: string;
@@ -153,6 +161,7 @@ export type PortalActionObservation = {
   after: PortalActionSnapshot;
   resolved: PortalActionSnapshot;
   screenshots: { before: Uint8Array; after: Uint8Array; resolved: Uint8Array; mimeType: 'image/png' };
+  documents?: readonly CapturedPortalDocument[];
 };
 
 export type ObservePortalActionInput = {

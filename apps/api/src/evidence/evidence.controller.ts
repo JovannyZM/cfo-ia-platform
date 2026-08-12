@@ -34,6 +34,7 @@ import { EVENT_BUS } from '../workers/workers.module';
 import type { AuthenticatedRequest } from '../auth/auth.types';
 import { ConversationSessionService } from '../conversations/conversation-session.service';
 import { PrismaService } from '../prisma.service';
+import { TemporaryEvidenceService } from './temporary-evidence.service';
 import {
   MultiPagePdfError,
   PDF_EVIDENCE_PROCESSOR,
@@ -51,6 +52,7 @@ export class EvidenceController {
     @Inject(EVENT_BUS) private readonly eventBus: EventBus,
     private readonly conversationSessions: ConversationSessionService,
     private readonly prisma: PrismaService,
+    private readonly temporaryEvidence: TemporaryEvidenceService,
     @Inject(PDF_EVIDENCE_PROCESSOR)
     private readonly pdfProcessor: PdfEvidenceProcessor,
   ) {}
@@ -116,6 +118,9 @@ export class EvidenceController {
     }
     const correlationId = randomUUID();
     const sourceEventId = randomUUID();
+    await this.temporaryEvidence.store({
+      workspaceId, sourceEventId, bytes: file.buffer, mimeType: file.mimetype, sha256: evidenceSha256,
+    });
     let registered: ExpenseRegisteredPayload | undefined;
     let failure: ExpenseEvidenceInterpretationFailedPayload | undefined;
     let informationRequired: ExpenseInformationRequiredPayload | undefined;
@@ -170,6 +175,7 @@ export class EvidenceController {
     }
 
     if (registered) {
+      await this.temporaryEvidence.linkExpense(sourceEventId, registered.expenseId);
       response.status(HttpStatus.CREATED);
       return { expense: registered };
     }

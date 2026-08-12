@@ -20,11 +20,19 @@ export type AutomatedInvoicePortalContext = {
   };
 };
 
+export type PendingDocumentPolicy = {
+  windowMs: number;
+  initialBackoffMs: number;
+  maxBackoffMs: number;
+  maxChecks: number;
+};
+
 export interface AutomatedInvoicePortalAdapter extends StagedPortalAdapter<string> {
   readonly merchantKeys: readonly string[];
   buildInvoiceFlowInput(context: AutomatedInvoicePortalContext): Readonly<Record<string, string>>;
   resolveDocumentNumber(context: AutomatedInvoicePortalContext): string | undefined;
   validatePreflight(context: AutomatedInvoicePortalContext): void;
+  getPendingDocumentPolicy?(): PendingDocumentPolicy;
 }
 
 @Injectable()
@@ -41,5 +49,9 @@ export class PortalAdapterRegistry {
 
   findByMerchantKey(merchantKey: string): AutomatedInvoicePortalAdapter | undefined {
     return this.adapters.get(merchantKey.trim().toUpperCase());
+  }
+
+  findByAdapterKey(adapterKey: string): AutomatedInvoicePortalAdapter | undefined {
+    return [...new Set(this.adapters.values())].find((adapter) => adapter.adapterKey === adapterKey);
   }
 }

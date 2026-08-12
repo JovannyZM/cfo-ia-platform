@@ -10,6 +10,8 @@ import {
 import { PortalFlowService } from '../portal-automation/portal-flow.service';
 import { WorkerRegistry } from '../workers/worker-registry';
 import { InvoiceRequestsService } from './invoice-requests.service';
+import { InvoiceDownloadManagerService } from './invoice-download-manager.service';
+import { PendingInvoiceDocumentsService } from './pending-invoice-documents.service';
 
 @Injectable()
 export class InvoiceAutomationWorker implements Worker {
@@ -25,6 +27,8 @@ export class InvoiceAutomationWorker implements Worker {
     private readonly requests: InvoiceRequestsService,
     private readonly adapters: PortalAdapterRegistry,
     private readonly portalFlows: PortalFlowService,
+    private readonly downloads: InvoiceDownloadManagerService,
+    private readonly pendingDocuments: PendingInvoiceDocumentsService,
     registry: WorkerRegistry,
   ) {
     registry.register(this);
@@ -75,6 +79,9 @@ export class InvoiceAutomationWorker implements Worker {
       taxProfileId: taxProfile.id,
       requestedByUserId: payload.requestedByUserId,
       ...(resolvedDocumentNumber ? { documentNumber: resolvedDocumentNumber } : {}),
+    });
+    await this.prisma.temporaryEvidenceObject.updateMany({
+      where: { expenseId: payload.expenseId }, data: { invoiceRequestId: request.id },
     });
     if (!resolvedDocumentNumber) {
       await this.requests.markNeedsDocumentData(event.workspaceId, request.id, 'BARCODE_REQUIRED');
@@ -158,8 +165,12 @@ export class InvoiceAutomationWorker implements Worker {
         input,
         attemptId,
       );
-      if (result.outcome === 'ACCEPTED_PENDING') {
-        await this.requests.markAcceptedPending(workspaceId, requestId, attemptId);
+      const capturedDocuments = result.stages.flatMap((stage) => stage.documents);
+      if (capturedDocuments.length > 0) {
+        const persisted = await this.downloads.persist({ workspaceId, invoiceRequestId: requestId, attemptId, documents: capturedDocuments });
+        await this.requests.completeWithPersistedDocuments(workspaceId, requestId, attemptId, persisted.map(({ id }) => id));
+      } else if (result.outcome === 'ACCEPTED_PENDING') {
+        await this.pendingDocuments.schedule(workspaceId, requestId, attemptId, adapter.adapterKey);
       } else if (result.outcome === 'ALREADY_COMPLETED') {
         await this.requests.markAlreadyCompleted(workspaceId, requestId, attemptId);
       } else if (result.outcome === 'REJECTED' || result.outcome === 'UNKNOWN_OUTCOME') {

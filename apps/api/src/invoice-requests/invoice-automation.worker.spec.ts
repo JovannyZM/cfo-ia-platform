@@ -1,4 +1,4 @@
-/* eslint-disable @typescript-eslint/no-explicit-any, @typescript-eslint/unbound-method */
+/* eslint-disable @typescript-eslint/no-explicit-any, @typescript-eslint/unbound-method, @typescript-eslint/no-unsafe-argument */
 import { EXPENSE_REGISTERED, type DomainEvent } from '@cfo-ia/domain';
 import { InvoiceRequestStatus, TaxProfileStatus } from '@prisma/client';
 import { describe, expect, it, vi } from 'vitest';
@@ -49,6 +49,7 @@ function harness(options: { requestStatus?: InvoiceRequestStatus; supported?: bo
     conversationSession: { findMany: vi.fn().mockResolvedValue([{ contextJson: {
       sourceEventId: 'source-event', draft: { documentNumber: 'ticket-number' },
     } }]) },
+    temporaryEvidenceObject: { updateMany: vi.fn().mockResolvedValue({ count: 1 }) },
   } as unknown as PrismaService;
   const requests = {
     create: vi.fn().mockResolvedValue({ id: ids.request, status: options.requestStatus ?? InvoiceRequestStatus.READY }),
@@ -70,11 +71,13 @@ function harness(options: { requestStatus?: InvoiceRequestStatus; supported?: bo
   };
   const adapters = { findByMerchantKey: vi.fn().mockReturnValue(adapter) } as unknown as PortalAdapterRegistry;
   const portalFlows = {
-    execute: vi.fn().mockResolvedValue({ outcome: 'ACCEPTED_PENDING' }),
+    execute: vi.fn().mockResolvedValue({ outcome: 'ACCEPTED_PENDING', stages: [] }),
   } as unknown as PortalFlowService;
+  const downloads = { persist: vi.fn().mockResolvedValue([]) };
+  const pendingDocuments = { schedule: vi.fn().mockResolvedValue(undefined) };
   const registry = new WorkerRegistry();
-  const worker = new InvoiceAutomationWorker(prisma, requests, adapters, portalFlows, registry);
-  return { worker, prisma: prisma as any, requests, adapter, adapters, portalFlows, registry };
+  const worker = new InvoiceAutomationWorker(prisma, requests, adapters, portalFlows, downloads as any, pendingDocuments as any, registry);
+  return { worker, prisma: prisma as any, requests, adapter, adapters, portalFlows, downloads, pendingDocuments, registry };
 }
 
 describe('InvoiceAutomationWorker', () => {
@@ -86,7 +89,7 @@ describe('InvoiceAutomationWorker', () => {
     }));
     expect(h.requests.tryStart).toHaveBeenCalledWith(ids.workspace, ids.request, 'CONFIGURED_ADAPTER');
     expect(h.portalFlows.execute).toHaveBeenCalledOnce();
-    expect(h.requests.markAcceptedPending).toHaveBeenCalledWith(ids.workspace, ids.request, ids.attempt);
+    expect(h.pendingDocuments.schedule).toHaveBeenCalledWith(ids.workspace, ids.request, ids.attempt, 'CONFIGURED_ADAPTER');
   });
 
   it('does not start PAE again when the idempotent request already progressed', async () => {
@@ -149,7 +152,7 @@ describe('InvoiceAutomationWorker', () => {
 
   it('classifies an already invoiced merchant response separately from a technical failure', async () => {
     const h = harness();
-    (h.portalFlows.execute as ReturnType<typeof vi.fn>).mockResolvedValueOnce({ outcome: 'ALREADY_COMPLETED' });
+    (h.portalFlows.execute as ReturnType<typeof vi.fn>).mockResolvedValueOnce({ outcome: 'ALREADY_COMPLETED', stages: [] });
     await h.worker.execute(event());
     expect(h.requests.markAlreadyCompleted).toHaveBeenCalledWith(ids.workspace, ids.request, ids.attempt);
     expect(h.requests.fail).not.toHaveBeenCalled();

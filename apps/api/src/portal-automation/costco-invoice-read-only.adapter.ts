@@ -138,6 +138,10 @@ export class CostcoInvoiceReadOnlyAdapter implements PortalActionAdapter<'CONTIN
     return stageKey === 'TAX_DATA' ? 'ACCEPTED_PENDING' : undefined;
   }
 
+  getPendingDocumentPolicy() {
+    return { windowMs: 72 * 60 * 60 * 1000, initialBackoffMs: 30 * 60 * 1000, maxBackoffMs: 12 * 60 * 60 * 1000, maxChecks: 12 };
+  }
+
   resolveActionOutcome(stageKey: string, observation: PortalActionObservation): PortalFlowOutcome | undefined {
     if (stageKey !== 'IDENTIFY_PURCHASE') return undefined;
     const summary = JSON.stringify(observation.request.responseSummary ?? {}).toUpperCase();
